@@ -1,4 +1,4 @@
-BILL HUB v0.3.1
+BILL HUB v0.3.2
 
 WHAT THIS PACKAGE CONTAINS
 - app/                     Generic Bill Hub application shell. No personal financial seed data is embedded here.
@@ -95,3 +95,14 @@ V0.3.1
 - October 2026 is flagged as "3× Midcon" because Midcon lands on Oct 2, Oct 16, and Oct 30.
 - Expanded Monthly Cash Flow also displays a "3-paycheck month · Midcon" badge.
 - Detection is generic and will work for any future biweekly income source.
+
+V0.3.2 — MOBILE / SPACING PASS
+- No financial calculation rules changed.
+- iPhone form fields are now 16px+ to prevent Safari's automatic input zoom.
+- Edit dialogs open focused on their heading instead of automatically opening the keyboard.
+- On phones, editors render as a compact bottom sheet with a scrollable form.
+- Edit-this-month actions remain two columns instead of becoming five oversized stacked buttons.
+- Dashboard panels, cards, headings, lists, and navigation use tighter, more consistent spacing.
+- Rolling Forecast becomes a readable four-stat month card on mobile instead of squeezing five columns together.
+- Only the current month is expanded automatically in Monthly Cash Flow; future months start collapsed.
+- Monthly line items are denser while preserving the running-balance display.

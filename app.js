@@ -227,17 +227,17 @@ function renderDashboard(){
        <div class="forecast-month-line"><strong>${m.label}</strong>${m.threePaySources.length?`<span class="payday-badge">3× ${m.threePaySources.join(', ')}</span>`:''}</div>
        <span class="muted small">${m.net>=0?'+':''}${money(m.net)} net</span>
      </div>
-     <div>${money(m.opening)}</div>
-     <div class="positive">+${money(m.income)}</div>
-     <div>-${money(m.expenses)}</div>
-     <div class="forecast-end ${m.ending<0?'negative':''}">${money(m.ending)}</div>
+     <div class="forecast-stat forecast-start"><span class="forecast-stat-label">Start</span><strong>${money(m.opening)}</strong></div>
+     <div class="forecast-stat forecast-income"><span class="forecast-stat-label">Income</span><strong class="positive">+${money(m.income)}</strong></div>
+     <div class="forecast-stat forecast-out"><span class="forecast-stat-label">Out</span><strong>-${money(m.expenses)}</strong></div>
+     <div class="forecast-stat forecast-end ${m.ending<0?'negative':''}"><span class="forecast-stat-label">End</span><strong>${money(m.ending)}</strong></div>
    </div>`).join('');
 
  const currentKey=(state.balance.updatedAt?new Date(state.balance.updatedAt):new Date());
  const currentMonthKey=`${currentKey.getFullYear()}-${String(currentKey.getMonth()+1).padStart(2,'0')}`;
 
  $('timeline').innerHTML=buckets.map((m,i)=>{
-   const open=m.key===currentMonthKey || i===1;
+   const open=m.key===currentMonthKey;
    const rows=m.items.length?m.items.map(x=>`
      <div class="month-cash-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}">
        <div class="cash-date">${new Date(x.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
@@ -362,6 +362,16 @@ function setItemStatusOptions(item){
    $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="pending">Pending / submitted</option><option value="cleared">Cleared</option>';
  }
 }
+
+function focusDialogTitle(id){
+ requestAnimationFrame(()=>{
+   const el=$(id);
+   if(el){
+     try{el.focus({preventScroll:true})}catch(_){el.focus()}
+   }
+ });
+}
+
 function openItemDialog(id){
  const item=findProjectedItem(id);if(!item)return;
  activeItem=item;
@@ -381,7 +391,7 @@ function openItemDialog(id){
  $('editRecurringFromItemBtn').classList.toggle('hidden',!directRecurringId);
  $('addCatchupBtn').classList.toggle('hidden',item.type==='income');
  $('skipMonthBtn').classList.toggle('hidden',!directRecurringId);
- $('itemDialog').showModal();
+ $('itemDialog').showModal();focusDialogTitle('itemDialogTitle');
 }
 $('closeItemBtn').addEventListener('click',()=>{$('itemDialog').close();activeItem=null});
 $('itemForm').addEventListener('submit',async e=>{
@@ -424,12 +434,12 @@ $('addCatchupBtn').addEventListener('click',()=>{
  $('extraDate').value=activeItem.date||todayISO();
  $('extraCategory').value=activeItem.category||'Other';
  $('extraStatus').value='upcoming';
- $('itemDialog').close();$('extraDialog').showModal();
+ $('itemDialog').close();$('extraDialog').showModal();focusDialogTitle('extraDialogTitle');
 });
 
 $('forecastMonths').addEventListener('change',()=>{state.preferences.forecastMonths=+$('forecastMonths').value;save()});
 $('updateBalanceBtn').addEventListener('click',()=>{
- $('newBalanceInput').value=state.balance.amount.toFixed(2);$('reconcilePreview').classList.add('hidden');$('balanceDialog').showModal();
+ $('newBalanceInput').value=state.balance.amount.toFixed(2);$('reconcilePreview').classList.add('hidden');$('balanceDialog').showModal();focusDialogTitle('balanceDialogTitle');
 });
 $('newBalanceInput').addEventListener('input',()=>{
  const newBal=+$('newBalanceInput').value;
@@ -463,7 +473,7 @@ $('balanceForm').addEventListener('submit',async e=>{
  await save();$('balanceDialog').close();
 });
 
-$('addExtraBtn').addEventListener('click',()=>{extraRelatedRuleId=null;$('extraDialogTitle').textContent='Add one-time extra';$('extraForm').reset();$('extraDate').value=todayISO();$('extraDialog').showModal()});
+$('addExtraBtn').addEventListener('click',()=>{extraRelatedRuleId=null;$('extraDialogTitle').textContent='Add one-time extra';$('extraForm').reset();$('extraDate').value=todayISO();$('extraDialog').showModal();focusDialogTitle('extraDialogTitle')});
 $('extraForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const status=$('extraStatus').value;
@@ -482,7 +492,7 @@ function openRuleDialog(id=null){
    $('ruleKind').value=r.kind||'bill';$('ruleSchedule').value=r.schedule||'monthly_day';
    $('ruleDay').value=r.day||'';$('ruleAnchor').value=r.anchor||'';
  }else{$('ruleSchedule').value='monthly_day';}
- toggleRuleFields();$('ruleDialog').showModal();
+ toggleRuleFields();$('ruleDialog').showModal();focusDialogTitle('ruleDialogTitle');
 }
 $('ruleSchedule').addEventListener('change',toggleRuleFields);
 function toggleRuleFields(){
@@ -504,7 +514,7 @@ function openIncomeDialog(id=null){
  $('incomeDialogTitle').textContent=r?'Edit recurring income':'Add income source';
  if(r){$('incomeName').value=r.name;$('incomeAmount').value=r.amount;$('incomeSchedule').value=r.schedule;$('incomeAnchor').value=r.anchor||''}
  $('incomeAnchorField').classList.toggle('hidden',$('incomeSchedule').value!=='biweekly');
- $('incomeDialog').showModal();
+ $('incomeDialog').showModal();focusDialogTitle('incomeDialogTitle');
 }
 $('incomeSchedule').addEventListener('change',()=>{$('incomeAnchorField').classList.toggle('hidden',$('incomeSchedule').value!=='biweekly')});
 $('incomeForm').addEventListener('submit',async e=>{
@@ -710,7 +720,7 @@ async function migrateState(){
    if(x.name==='Credit One – August' && x.date!=='2026-08-28'){x.date='2026-08-28';changed=true}
  }
 
- if(state.version!=='0.3.1'){state.version='0.3.1';changed=true}
+ if(state.version!=='0.3.2'){state.version='0.3.2';changed=true}
  if(changed) await idbSet('state',state);
  return changed;
 }
