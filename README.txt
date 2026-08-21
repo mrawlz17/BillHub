@@ -1,4 +1,4 @@
-BILL HUB v0.1.1
+BILL HUB v0.2.0
 
 WHAT THIS PACKAGE CONTAINS
 - app/                     Generic Bill Hub application shell. No personal financial seed data is embedded here.
@@ -36,3 +36,30 @@ KNOWN ITEMS NOT AUTOMATED YET
 PRIVACY
 The app/ folder is safe to host as a generic shell because it contains no personal seed values.
 Do not publish PRIVATE_DO_NOT_UPLOAD.
+
+V0.1.2 FIXES
+- 8/21 Midcon paycheck is no longer projected a second time when the starting balance already includes it.
+- A manually submitted recurring bill suppresses that month's generated copy, even when it was submitted before its due date.
+- Date-only display no longer shifts one day backward because of UTC parsing.
+- Recurring bills on the Plan screen are sorted by due date.
+- Monthly reserve display now distinguishes projected bank balance from money reserved / safe to spend.
+- Existing v0.1.1 browser data is migrated automatically when the updated app shell is opened.
+
+V0.1.3 FIX
+- August Groceries $250 and Fuel $240 are remaining spending-pool balances.
+- They are now Upcoming pool commitments, NOT Pending submitted payments.
+- They continue to reduce the cash-flow forecast until spent/reduced, but are excluded from Pending Outflows.
+- Existing v0.1.2 local data auto-migrates when this version opens.
+
+V0.2.0 MONTH-SPECIFIC EDITING
+- Tap any Upcoming Cash Flow row to open an editor instead of blindly cycling status.
+- Edit amount, date, category, and status for THIS occurrence only.
+- Spending pools label the amount as remaining for the period.
+- Edit the recurring bill/income rule separately; month overrides stay intact.
+- Skip a recurring occurrence for one month without changing future months.
+- Add an extra/catch-up payment tied to the original bill for category/reporting continuity.
+- Plan-screen recurring bill and income rows are now tappable for direct recurring-rule edits.
+- Automatic local snapshots are created before month edits, rule edits, skips, and adds.
+- Existing v0.1.3 IndexedDB data migrates to v0.2.0 automatically.
+
+- August remaining Groceries $250 and Fuel $240 now replace the normal second-half $400/$300 pool commitments instead of being added on top.
