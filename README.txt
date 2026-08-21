@@ -1,108 +1,86 @@
-BILL HUB v0.3.2
+BILL HUB v0.4.0
 
-WHAT THIS PACKAGE CONTAINS
-- app/                     Generic Bill Hub application shell. No personal financial seed data is embedded here.
-- PRIVATE_DO_NOT_UPLOAD/   Your private starting data. NEVER upload this folder to a public repository.
+PURPOSE
+Bill Hub is a private/local cash-flow planner. The actual bank balance is the source-of-truth checkpoint; future bills and income are projected from that checkpoint.
 
-FIRST RUN
-1. Serve/open the contents of app/ from a web server.
-2. Bill Hub will show a setup screen.
-3. Choose "Import private seed".
-4. Select PRIVATE_DO_NOT_UPLOAD/billhub-private-seed.json.
-5. After import, the financial data is stored in the browser's IndexedDB.
+UPDATE / INSTALL
+- The app/ folder is the generic deployable shell and contains no personal financial values.
+- Replacing the hosted app/ files does NOT erase the browser's IndexedDB financial data.
+- If you are updating an existing Bill Hub install, deploy the new app/ files and open the app. Existing local data migrates in place.
+- Keep an encrypted .bhub backup before major changes or moving to another device/browser.
+
+V0.4.0 — DAILY-USE / SAFETY UPDATE
+1. One-time/manual entries can now be truly deleted.
+   - Catch-up payments, extras, reconciliation entries, and other one-time manual items can be removed.
+   - Recurring occurrences still use Skip This Month rather than deleting the recurring rule.
+   - Delete actions are undoable during the current app session.
+
+2. Rolling forecast is fixed to six months.
+   - Current month + next five months only.
+   - Removed 3/6/12 month selector.
+
+3. Dashboard layout redesigned around actual daily use.
+   - Current position cards.
+   - This Month summary.
+   - Next Up events.
+   - Six-Month Outlook.
+   - Detailed monthly cash flow moved to a tap-to-open month detail sheet instead of a giant dashboard ledger.
+
+4. Automatic local snapshots removed.
+   - No app-open snapshots.
+   - No snapshot restore prompt.
+   - Existing old snapshot data is discarded on first v0.4.0 load.
+   - Encrypted manual backup/restore remains the recovery method.
+
+5. App version and update controls added to Settings.
+   - Displays installed version.
+   - Automatically checks version.json on the hosted app.
+   - Shows Up to date / Update available.
+   - Check for update, Update & reload, and Force refresh app controls.
+   - Refresh/update clears app caches only; IndexedDB financial data is not cleared.
+
+6. Reset Local Data safety strengthened.
+   - Dedicated destructive-action sheet.
+   - Back Up First option.
+   - Must type DELETE before the final reset button is enabled.
+
+7. Recent Activity + Undo added.
+   - Reports shows recent Bill Hub changes.
+   - Most edits/adds/deletes/balance changes can be undone once during the current app session.
+   - A temporary Undo toast appears after reversible actions.
+
+8. Cash-flow entries now identify why they exist.
+   - CATCH-UP, EXTRA, OVERRIDE, POOL, SKIPPED, and RECONCILE labels appear where applicable.
+   - Item editor explains whether the item is recurring, a month override, or a one-time entry.
+
+9. Manual backup freshness + restore preview added.
+   - Settings shows the last recorded manual backup time.
+   - Warns when the recorded backup is 14+ days old.
+   - Encrypted restore now previews backup date, version, balance checkpoint, recurring bill count, and income source count before replacing local data.
+
+ADDITIONAL INTERNAL FIX
+- Legacy financial migration routines were removed from the public app shell. v0.4.0 migration only normalizes generic app metadata and never rewrites stored financial names, amounts, statuses, or month overrides.
 
 DATA MODEL
-- Actual bank balance is the source-of-truth checkpoint.
-- Upcoming = not submitted yet.
-- Pending = payment submitted but has not cleared the bank.
-- Cleared = transaction has left the bank.
-- Daily balance updates reconcile unexplained decreases to "Misc Daily".
-- Unexplained increases become "Uncategorized Credit".
-- Recurring bills and income generate future projections.
-- A $700 September catch-up reserve is included as a reserve, not a fake bank transaction.
+- Upcoming = not submitted yet; remains projected.
+- Pending = submitted/initiated but not yet cleared; remains projected because the bank balance still includes it.
+- Cleared = expense actually left the bank.
+- Received = income actually reached the bank.
+- Daily balance updates reconcile unexplained decreases to Misc Daily and unexplained increases to Uncategorized Credit.
+- Spending pools represent remaining expected commitments, not transaction-by-transaction spending.
+- Each month ends at its projected bank balance; that exact ending becomes the next month's starting balance.
 
 BACKUPS
-- The app creates a local IndexedDB snapshot on every open and keeps the latest 30.
-- It also snapshots before destructive actions and balance updates.
-- Settings > Export encrypted backup creates an AES-GCM encrypted .bhub file using a passphrase you choose.
-- Keep that backup in iCloud Drive/Files if desired.
+- Top Backup button and Settings > Export encrypted backup create an AES-GCM encrypted .bhub file using a passphrase you choose.
+- Bill Hub records the export time locally to show backup freshness.
+- Restore encrypted backup decrypts the file, shows a preview, and only replaces local state after explicit confirmation.
+- Keep backup files somewhere external to the browser (for example Files/iCloud Drive).
 
-KNOWN ITEMS NOT AUTOMATED YET
-- The old ATV $215 grouping has been split into Kayo $75/month and Kawasaki $140/month, both due on the 12th.
-- "Comm" and "Taxes" are treated as one-time extras rather than recurring bills.
-- August values that differ from normal recurring defaults are entered as August-specific manual items.
-- The first version has core add forms but not full edit/delete UI for every rule yet.
+UPDATES
+- app/version.json is the hosted version marker. Publish it with every release and update its version value.
+- Bill Hub checks that file with cache disabled.
+- Force Refresh clears Cache Storage/service-worker shell cache and reloads the hosted app. It does not delete IndexedDB.
 
 PRIVACY
-The app/ folder is safe to host as a generic shell because it contains no personal seed values.
-Do not publish PRIVATE_DO_NOT_UPLOAD.
-
-V0.1.2 FIXES
-- 8/21 Midcon paycheck is no longer projected a second time when the starting balance already includes it.
-- A manually submitted recurring bill suppresses that month's generated copy, even when it was submitted before its due date.
-- Date-only display no longer shifts one day backward because of UTC parsing.
-- Recurring bills on the Plan screen are sorted by due date.
-- Monthly reserve display now distinguishes projected bank balance from money reserved / safe to spend.
-- Existing v0.1.1 browser data is migrated automatically when the updated app shell is opened.
-
-V0.1.3 FIX
-- August Groceries $250 and Fuel $240 are remaining spending-pool balances.
-- They are now Upcoming pool commitments, NOT Pending submitted payments.
-- They continue to reduce the cash-flow forecast until spent/reduced, but are excluded from Pending Outflows.
-- Existing v0.1.2 local data auto-migrates when this version opens.
-
-V0.2.0 MONTH-SPECIFIC EDITING
-- Tap any Upcoming Cash Flow row to open an editor instead of blindly cycling status.
-- Edit amount, date, category, and status for THIS occurrence only.
-- Spending pools label the amount as remaining for the period.
-- Edit the recurring bill/income rule separately; month overrides stay intact.
-- Skip a recurring occurrence for one month without changing future months.
-- Add an extra/catch-up payment tied to the original bill for category/reporting continuity.
-- Plan-screen recurring bill and income rows are now tappable for direct recurring-rule edits.
-- Automatic local snapshots are created before month edits, rule edits, skips, and adds.
-- Existing v0.1.3 IndexedDB data migrates to v0.2.0 automatically.
-
-- August remaining Groceries $250 and Fuel $240 now replace the normal second-half $400/$300 pool commitments instead of being added on top.
-
-V0.2.1 FIXES
-- Removed the reserve/carryover feature entirely.
-- Each month's projected ending bank balance automatically becomes the next month's starting balance.
-- The old $700 September reserve is removed from both new seed data and existing browser data.
-- T Car is suppressed for August 2026 because it was not among the remaining obligations at the 8/21 starting checkpoint.
-- T Car continues normally in future months.
-- Existing v0.2.0 local data auto-migrates on open.
-
-V0.2.2 FIXES
-- Fixed August double-counting of State Farm, second-half Groceries, and second-half Fuel.
-- Month-specific replacements now suppress recurring rules by both rule ID and rule name, making imports/migrations more reliable.
-- August obligations now total $3,700 from the 8/21 checkpoint, producing a projected August ending balance of $690 with the known $2,425 CSS check.
-- Remaining week-4 M Car, Mortgage, Natural Gas, and Electric items forecast in the Aug 25 pay-period bucket instead of on an invented Aug 22 date.
-- Their original due day is retained and displayed as metadata.
-- Existing v0.2.1 data auto-migrates on open.
-
-V0.3.0
-- August 25 CSS occurrence is $2,500; future CSS checks remain at the recurring $2,425.
-- August known math now resolves to: $1,965 start + $2,500 income - $3,700 outflow = $765 ending.
-- August cash timing now follows the spreadsheet pay-period layout: Maverick and Apple before the 8/25 CSS check; week-4 obligations against/after that check.
-- Rolling Forecast was redesigned as a compact month-by-month table showing Start, Income, Outflow, and End.
-- Rolling Forecast and Monthly Cash Flow are now generated from the exact same month buckets to prevent mismatched totals.
-- Upcoming Cash Flow was replaced by Monthly Cash Flow. Each month has its own expandable section and summary.
-- Each cash-flow line now shows the projected running balance after that item.
-- Existing v0.2.2 data auto-migrates.
-
-V0.3.1
-- Rolling Forecast automatically detects three-paycheck months for biweekly income sources.
-- October 2026 is flagged as "3× Midcon" because Midcon lands on Oct 2, Oct 16, and Oct 30.
-- Expanded Monthly Cash Flow also displays a "3-paycheck month · Midcon" badge.
-- Detection is generic and will work for any future biweekly income source.
-
-V0.3.2 — MOBILE / SPACING PASS
-- No financial calculation rules changed.
-- iPhone form fields are now 16px+ to prevent Safari's automatic input zoom.
-- Edit dialogs open focused on their heading instead of automatically opening the keyboard.
-- On phones, editors render as a compact bottom sheet with a scrollable form.
-- Edit-this-month actions remain two columns instead of becoming five oversized stacked buttons.
-- Dashboard panels, cards, headings, lists, and navigation use tighter, more consistent spacing.
-- Rolling Forecast becomes a readable four-stat month card on mobile instead of squeezing five columns together.
-- Only the current month is expanded automatically in Monthly Cash Flow; future months start collapsed.
-- Monthly line items are denser while preserving the running-balance display.
+- app/ is safe to host as a generic shell because it contains no personal seed values.
+- Financial data remains in browser IndexedDB unless the user explicitly restores/imports data or resets local data.

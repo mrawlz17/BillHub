@@ -703,3 +703,274 @@ dialog form > label{
     grid-column:1/-1;
   }
 }
+
+/* ================================================================
+   v0.4.0 — daily-use layout, safety, update, and recovery pass
+   ================================================================ */
+
+.section-title-line{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:2px;
+  font-size:18px;
+  font-weight:850;
+}
+
+.compact-btn{
+  min-height:36px;
+  padding:7px 10px;
+  white-space:nowrap;
+}
+
+.current-month-panel{
+  overflow:hidden;
+}
+
+.current-month-math{
+  border:1px solid var(--line);
+  border-radius:11px;
+  overflow:hidden;
+}
+
+.next-up-list{
+  padding:0 2px;
+}
+
+.forecast-row{
+  cursor:pointer;
+  border-radius:10px;
+  transition:background .12s ease,border-color .12s ease;
+}
+.forecast-row:hover,
+.forecast-row:focus-visible{
+  background:rgba(255,255,255,.025);
+  outline:none;
+}
+.forecast-row::after{
+  content:'›';
+  display:none;
+  color:var(--muted);
+  font-size:18px;
+}
+
+.entry-badges{
+  display:inline-flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:4px;
+  margin-left:5px;
+  vertical-align:middle;
+}
+.entry-tag{
+  display:inline-flex;
+  align-items:center;
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:2px 5px;
+  font-size:8px;
+  line-height:1.2;
+  font-weight:850;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  color:var(--muted);
+  white-space:nowrap;
+}
+.entry-tag.catchup{color:#ffd580;border-color:#6f5a2e;background:rgba(245,196,81,.07)}
+.entry-tag.extra{color:#c9b8ff;border-color:#53477a;background:rgba(151,126,255,.07)}
+.entry-tag.override{color:#8fcaff;border-color:#355b78;background:rgba(85,169,240,.07)}
+.entry-tag.pool{color:#7ce5b4;border-color:#356a54;background:rgba(92,225,165,.06)}
+.entry-tag.skipped{color:#ffb6b6;border-color:#633038;background:rgba(255,107,107,.05)}
+.entry-tag.reconcile{color:#c7ced6;border-color:#4a535d;background:rgba(255,255,255,.03)}
+
+.entry-context{
+  display:flex;
+  align-items:center;
+  min-height:20px;
+  margin:-4px 0 8px;
+}
+
+.dialog-shell{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:16px;
+  max-height:min(86dvh,760px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+.dialog-shell > h3{
+  margin:0;
+  outline:none;
+}
+.dialog-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+.dialog-head h3{margin:0 0 3px;outline:none}
+.dialog-month-math{
+  border:1px solid var(--line);
+  border-radius:11px;
+  overflow:hidden;
+  flex:0 0 auto;
+}
+.dialog-cash-list{
+  padding:0 2px;
+}
+
+.activity-row{
+  display:grid;
+  grid-template-columns:86px minmax(0,1fr);
+  gap:10px;
+  padding:10px 0;
+  border-bottom:1px solid var(--line);
+}
+.activity-row:last-child{border-bottom:0}
+.activity-time{font-size:11px;color:var(--muted);line-height:1.3}
+.activity-main{min-width:0;line-height:1.25}
+.activity-main strong{font-size:13px}
+.activity-detail{font-size:11px;color:var(--muted);margin-top:2px}
+
+.toast{
+  position:fixed;
+  left:50%;
+  bottom:calc(72px + env(safe-area-inset-bottom));
+  transform:translateX(-50%);
+  z-index:80;
+  width:min(92vw,480px);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#20262c;
+  box-shadow:0 14px 40px rgba(0,0,0,.35);
+  color:var(--text);
+  font-size:13px;
+}
+.toast-undo{
+  background:transparent;
+  color:var(--accent);
+  min-height:auto;
+  padding:5px 7px;
+}
+
+.backup-status-grid,
+.update-summary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.backup-age{
+  text-align:right;
+}
+.backup-warning{
+  color:var(--warn);
+}
+.update-summary{
+  padding:7px 0 10px;
+}
+.update-status-wrap{text-align:right}
+.update-pill{
+  display:inline-flex;
+  align-items:center;
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:5px 8px;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:800;
+}
+.update-pill.ok{color:var(--accent);border-color:#356a54}
+.update-pill.available{color:var(--warn);border-color:#705d2d}
+.update-pill.error{color:#ffb6b6;border-color:#633038}
+.update-buttons{margin-top:12px}
+
+.restore-preview{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:0;
+  border:1px solid var(--line);
+  border-radius:11px;
+  overflow:hidden;
+}
+.restore-preview > div{
+  padding:10px;
+  border-bottom:1px solid var(--line);
+}
+.restore-preview > div:nth-last-child(-n+2){border-bottom:0}
+.restore-preview .restore-label{color:var(--muted);font-size:12px}
+.restore-preview .restore-value{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+
+.danger-notice{
+  background:#26171a;
+  border:1px solid #633038;
+  color:#ffd0d0;
+  border-radius:11px;
+  padding:12px;
+  line-height:1.45;
+  font-size:13px;
+}
+.full-btn{width:100%}
+.confirm-label strong{color:var(--text)}
+button:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+
+/* v0.4 uses a drill-in month detail instead of the long dashboard ledger. */
+#dashboardView .monthly-flow{display:none}
+
+@media(max-width:650px){
+  .current-month-math{
+    grid-template-columns:repeat(4,minmax(0,1fr));
+  }
+  .forecast-row{
+    position:relative;
+    padding-right:22px;
+  }
+  .forecast-row::after{
+    display:block;
+    position:absolute;
+    right:8px;
+    top:50%;
+    transform:translateY(-50%);
+  }
+  .dialog-shell{
+    max-height:min(82dvh,720px);
+    padding:15px 14px calc(16px + env(safe-area-inset-bottom));
+  }
+  .dialog-shell > h3,
+  .dialog-head h3{
+    font-size:22px;
+  }
+  .dialog-head{
+    align-items:center;
+  }
+  .backup-status-grid,
+  .update-summary{
+    align-items:flex-start;
+  }
+  .activity-row{
+    grid-template-columns:72px minmax(0,1fr);
+  }
+  .button-grid{
+    grid-template-columns:1fr 1fr;
+  }
+}
+
+@media(max-width:390px){
+  .button-grid.update-buttons{
+    grid-template-columns:1fr;
+  }
+  .current-month-math{
+    grid-template-columns:repeat(2,1fr);
+  }
+}

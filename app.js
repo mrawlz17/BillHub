@@ -1,7 +1,10 @@
-
+const APP_VERSION='0.4.0';
+const FORECAST_MONTHS=6;
 const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
 let activeItem=null, editingRuleId=null, editingIncomeId=null, extraRelatedRuleId=null;
+let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null;
+let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
 
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0));
@@ -16,6 +19,7 @@ const isoDate=d=>{
 };
 const todayISO=()=>isoDate(new Date());
 const uid=()=>crypto.randomUUID();
+const nowISO=()=>new Date().toISOString();
 
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -34,8 +38,8 @@ function idbDel(k){return new Promise((res,rej)=>{const t=db.transaction('kv','r
 
 function blankState(){
  return {
-  version:'0.1',
-  createdAt:new Date().toISOString(),
+  version:APP_VERSION,
+  createdAt:nowISO(),
   categories:['Housing','Utilities','Vehicles','Fuel','Food','Insurance','Debt','Kids','School','Sports','Subscriptions','Taxes','Medical','Personal','Savings','Miscellaneous','Other'],
   balance:{amount:0,updatedAt:null},
   balanceHistory:[],
@@ -44,16 +48,50 @@ function blankState(){
   manualItems:[],
   reconciledEventIds:[],
   reserves:[],
-  preferences:{forecastMonths:6}
+  preferences:{},
+  activity:[],
+  backupMeta:{lastExportAt:null,lastExportVersion:null}
  };
 }
-async function save(){await idbSet('state',state);renderAll()}
-async function makeSnapshot(reason='open'){
-  if(!state) return;
-  let snaps=await idbGet('snapshots')||[];
-  snaps.unshift({id:uid(),createdAt:new Date().toISOString(),reason,state:structuredClone(state)});
-  snaps=snaps.slice(0,30);
-  await idbSet('snapshots',snaps);
+async function save(){
+  if(state) await idbSet('state',state);
+  renderAll();
+}
+
+function logActivity(action,detail=''){
+  if(!state)return;
+  state.activity=state.activity||[];
+  state.activity.unshift({id:uid(),at:nowISO(),action,detail});
+  state.activity=state.activity.slice(0,60);
+}
+function prepareUndo(label){
+  if(!state)return;
+  undoState={label,state:structuredClone(state)};
+}
+function showToast(text,allowUndo=false){
+  clearTimeout(toastTimer);
+  $('toastText').textContent=text;
+  $('toastUndoBtn').classList.toggle('hidden',!allowUndo||!undoState);
+  $('toast').classList.remove('hidden');
+  toastTimer=setTimeout(()=>$('toast').classList.add('hidden'),5000);
+}
+async function commitAction(label,detail,mutator,{toast=true}={}){
+  prepareUndo(label);
+  await mutator();
+  logActivity(label,detail);
+  await idbSet('state',state);
+  renderAll();
+  if(toast)showToast(label,true);
+}
+async function undoLastAction(){
+  if(!undoState)return;
+  const label=undoState.label;
+  state=structuredClone(undoState.state);
+  undoState=null;
+  logActivity('Undo',`Reverted: ${label}`);
+  await idbSet('state',state);
+  renderAll();
+  showToast(`Undid: ${label}`,false);
 }
 
 function addMonths(date,n){const d=new Date(date);d.setMonth(d.getMonth()+n);return d}
@@ -108,31 +146,30 @@ function genIncomeOccurrences(start,end){
      while(cur<=stop){
        for(const day of [10,25]){
          const dt=safeDay(cur.getFullYear(),cur.getMonth(),day);
-         if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
+         if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
        }
        cur=addMonths(cur,1);
      }
    } else if(r.schedule==='biweekly'&&r.anchor){
-     for(const dt of biweeklyDates(r.anchor,start,end))out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
+     for(const dt of biweeklyDates(r.anchor,start,end))out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
    } else if(r.schedule==='second_monday'){
      let cur=new Date(start.getFullYear(),start.getMonth(),1,12),stop=new Date(end.getFullYear(),end.getMonth(),1,12);
      while(cur<=stop){
        const dt=secondMonday(cur.getFullYear(),cur.getMonth());
-       if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
+       if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
        cur=addMonths(cur,1);
      }
    }
  }
  return out;
 }
-function itemKey(x){return `${x.ruleId||''}|${x.date}|${x.name}|${x.type}`}
-function projectedItems(months=6){
+
+function projectedItems(months=FORECAST_MONTHS){
  const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
  const start=new Date(checkpoint); start.setHours(0,0,0,0);
  const end=addMonths(start,months); end.setDate(end.getDate()+5);
  let gen=[...genBillOccurrences(start,end),...genIncomeOccurrences(start,end)];
  const manuals=(state.manualItems||[]).filter(x=>new Date(x.date+'T12:00:00')>=start&&new Date(x.date+'T12:00:00')<=end);
- // manual overrides can suppress matching generated occurrence by overrideRuleId/date
  const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
  const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
  const suppressNameMonth=new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||x.date.slice(0,7)}`));
@@ -141,22 +178,21 @@ function projectedItems(months=6){
    !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
    !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
  );
- const items=[...gen,...manuals].sort((a,b)=>a.date.localeCompare(b.date)||(a.type==='income'?-1:1));
- return items;
+ return [...gen,...manuals].sort((a,b)=>a.date.localeCompare(b.date)||(a.type==='income'?-1:1));
 }
-function projection(months=6){
+function projection(months=FORECAST_MONTHS){
  const items=projectedItems(months);
- let bal=+state.balance.amount||0, low=bal, lowDate=state.balance.updatedAt||new Date().toISOString();
+ let bal=+state.balance.amount||0, low=bal, lowDate=state.balance.updatedAt||nowISO();
  const rows=[];
  for(const x of items){
-   if(x.status==='cleared'||x.status==='received'||x.status==='skipped') continue; // cleared/received already reflected; skipped has no cash effect
+   if(x.status==='cleared'||x.status==='received'||x.status==='skipped') continue;
    bal += x.type==='income'?+x.amount:-Math.abs(+x.amount);
    rows.push({...x,projectedBalance:bal});
    if(bal<low){low=bal;lowDate=x.date}
  }
  return {items,rows,ending:bal,low,lowDate};
 }
-function monthBuckets(months){
+function monthBuckets(months=FORECAST_MONTHS){
  const items=projectedItems(months);
  const startDate=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
  let working=+state.balance.amount||0;
@@ -176,15 +212,11 @@ function monthBuckets(months){
      monthItems.push({...x,projectedAfter:working});
    }
    const key=`${mStart.getFullYear()}-${String(mStart.getMonth()+1).padStart(2,'0')}`;
-
    const incomeCounts={};
-   for(const x of monthItems.filter(x=>x.type==='income')){
-     incomeCounts[x.name]=(incomeCounts[x.name]||0)+1;
-   }
+   for(const x of monthItems.filter(x=>x.type==='income'))incomeCounts[x.name]=(incomeCounts[x.name]||0)+1;
    const threePaySources=(state.incomeRules||[])
      .filter(r=>r.schedule==='biweekly' && (incomeCounts[r.name]||0)>=3)
      .map(r=>r.name);
-
    result.push({
      key,
      label:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),
@@ -201,28 +233,66 @@ function statusBadge(x){
  if(s==='received')s='cleared';
  return `<span class="badge ${s}">${s}</span>`;
 }
+function entryTags(x){
+ const tags=[];
+ if(x.kind==='catchup')tags.push(['CATCH-UP','catchup']);
+ else if(x.kind==='extra')tags.push(['EXTRA','extra']);
+ else if(x.kind==='reconciliation')tags.push(['RECONCILE','reconcile']);
+ if(x.overrideRuleId && x.kind!=='catchup')tags.push(['OVERRIDE','override']);
+ if(x.kind==='pool')tags.push(['POOL','pool']);
+ if(x.status==='skipped')tags.push(['SKIPPED','skipped']);
+ if(!tags.length)return '';
+ return `<span class="entry-badges">${tags.map(([t,c])=>`<span class="entry-tag ${c}">${t}</span>`).join('')}</span>`;
+}
+function cashItemHTML(x,{showAfter=true}={}){
+ return `<div class="month-cash-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}">
+   <div class="cash-date">${new Date(x.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+   <div class="cash-main">
+     <strong>${x.name}</strong>${statusBadge(x)}${entryTags(x)}
+     <div class="muted small">${x.category||''}${x.dueDay?` · due ${x.dueDay}${ordinal(x.dueDay)}`:''}</div>
+   </div>
+   <div class="cash-money">
+     <div class="amt ${x.type==='income'?'positive':''}">${x.type==='income'?'+':'-'}${money(x.amount)}</div>
+     ${showAfter?`<div class="muted small">after ${money(x.projectedAfter??x.projectedBalance)}</div>`:''}
+   </div>
+   <div class="cash-chevron">›</div>
+ </div>`;
+}
+function monthMathHTML(m){
+ return `<div><span>Starting</span><strong>${money(m.opening)}</strong></div>
+   <div><span>Income</span><strong class="positive">+${money(m.income)}</strong></div>
+   <div><span>Outflow</span><strong>-${money(m.expenses)}</strong></div>
+   <div><span>Ending</span><strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong></div>`;
+}
+
 function renderDashboard(){
  $('currentBalance').textContent=money(state.balance.amount);
  $('balanceUpdated').textContent=state.balance.updatedAt?`Updated ${new Date(state.balance.updatedAt).toLocaleString()}`:'Not updated';
-
- const months=+($('forecastMonths').value||state.preferences.forecastMonths||6);
- const p=projection(months);
- const buckets=monthBuckets(months);
+ const p=projection(FORECAST_MONTHS);
+ const buckets=monthBuckets(FORECAST_MONTHS);
  lastProjection=p.rows;
-
- const pending=state.manualItems.filter(x=>x.type==='expense'&&x.status==='pending').reduce((s,x)=>s+Math.abs(+x.amount),0);
+ const pending=(state.manualItems||[]).filter(x=>x.type==='expense'&&x.status==='pending').reduce((s,x)=>s+Math.abs(+x.amount),0);
  $('pendingOutflows').textContent=money(pending);
-
  const ni=p.items.find(x=>x.type==='income'&&x.status!=='received'&&x.status!=='skipped');
  $('nextIncome').textContent=ni?money(ni.amount):'$0.00';
  $('nextIncomeDate').textContent=ni?`${ni.name} · ${dstr(ni.date)}`:'—';
-
  $('lowestBalance').textContent=money(p.low);
  $('lowestBalance').className='metric '+(p.low<0?'negative':'');
  $('lowestBalanceDate').textContent=dstr(p.lowDate);
 
+ const current=buckets[0];
+ if(current){
+   $('thisMonthTitle').innerHTML=`<span>${current.longLabel}</span>${current.threePaySources.length?`<span class="payday-badge">3-paycheck month · ${current.threePaySources.join(', ')}</span>`:''}`;
+   $('thisMonthStats').innerHTML=monthMathHTML(current);
+   $('viewCurrentMonthBtn').dataset.monthKey=current.key;
+ }
+
+ const nextRows=p.rows.slice(0,8).map(x=>({...x,projectedAfter:x.projectedBalance}));
+ $('nextUpList').innerHTML=nextRows.length?nextRows.map(x=>cashItemHTML(x)).join(''):'<p class="muted">No upcoming projected activity.</p>';
+ document.querySelectorAll('#nextUpList .month-cash-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
+
  $('monthCards').innerHTML=buckets.map(m=>`
-   <div class="forecast-row">
+   <div class="forecast-row" data-month-key="${m.key}" role="button" tabindex="0" aria-label="Open ${m.longLabel} details">
      <div class="forecast-month">
        <div class="forecast-month-line"><strong>${m.label}</strong>${m.threePaySources.length?`<span class="payday-badge">3× ${m.threePaySources.join(', ')}</span>`:''}</div>
        <span class="muted small">${m.net>=0?'+':''}${money(m.net)} net</span>
@@ -232,49 +302,11 @@ function renderDashboard(){
      <div class="forecast-stat forecast-out"><span class="forecast-stat-label">Out</span><strong>-${money(m.expenses)}</strong></div>
      <div class="forecast-stat forecast-end ${m.ending<0?'negative':''}"><span class="forecast-stat-label">End</span><strong>${money(m.ending)}</strong></div>
    </div>`).join('');
-
- const currentKey=(state.balance.updatedAt?new Date(state.balance.updatedAt):new Date());
- const currentMonthKey=`${currentKey.getFullYear()}-${String(currentKey.getMonth()+1).padStart(2,'0')}`;
-
- $('timeline').innerHTML=buckets.map((m,i)=>{
-   const open=m.key===currentMonthKey;
-   const rows=m.items.length?m.items.map(x=>`
-     <div class="month-cash-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}">
-       <div class="cash-date">${new Date(x.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
-       <div class="cash-main">
-         <strong>${x.name}</strong>${statusBadge(x)}
-         <div class="muted small">${x.category||''}${x.kind==='pool'?' · spending pool':''}${x.dueDay?` · due ${x.dueDay}${ordinal(x.dueDay)}`:''}</div>
-       </div>
-       <div class="cash-money">
-         <div class="amt ${x.type==='income'?'positive':''}">${x.type==='income'?'+':'-'}${money(x.amount)}</div>
-         <div class="muted small">after ${money(x.projectedAfter)}</div>
-       </div>
-       <div class="cash-chevron">›</div>
-     </div>`).join(''):'<div class="empty-month">No projected activity.</div>';
-
-   return `
-     <details class="month-flow-card" ${open?'open':''}>
-       <summary>
-         <div class="month-summary-title">
-           <div class="month-title-line"><strong>${m.longLabel}</strong>${m.threePaySources.length?`<span class="payday-badge">3-paycheck month · ${m.threePaySources.join(', ')}</span>`:''}</div>
-           <span class="muted small">Start ${money(m.opening)} · Net ${m.net>=0?'+':''}${money(m.net)}</span>
-         </div>
-         <div class="month-summary-end">
-           <span class="muted small">Projected end</span>
-           <strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong>
-         </div>
-       </summary>
-       <div class="month-math">
-         <div><span>Starting</span><strong>${money(m.opening)}</strong></div>
-         <div><span>Income</span><strong class="positive">+${money(m.income)}</strong></div>
-         <div><span>Outflow</span><strong>-${money(m.expenses)}</strong></div>
-         <div><span>Ending</span><strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong></div>
-       </div>
-       <div class="month-cash-list">${rows}</div>
-     </details>`;
- }).join('');
-
- document.querySelectorAll('.month-cash-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
+ document.querySelectorAll('[data-month-key]').forEach(el=>{
+   const open=()=>openMonthDetail(el.dataset.monthKey);
+   el.addEventListener('click',open);
+   el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});
+ });
 }
 function renderPlan(){
  const sortedBills=[...state.bills].sort((a,b)=>{
@@ -298,16 +330,50 @@ function renderPlan(){
 }
 function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return (s[(v-20)%10]||s[v]||s[0])}
 function renderReports(){
- const cleared=state.manualItems.filter(x=>x.type==='expense'&&x.status==='cleared');
+ const activity=(state.activity||[]).slice(0,15);
+ $('recentActivity').innerHTML=activity.length?activity.map(a=>`
+   <div class="activity-row">
+     <div class="activity-time">${new Date(a.at).toLocaleDateString('en-US',{month:'short',day:'numeric'})}<br>${new Date(a.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</div>
+     <div class="activity-main"><strong>${a.action}</strong>${a.detail?`<div class="activity-detail">${a.detail}</div>`:''}</div>
+   </div>`).join(''):'<p class="muted">No activity recorded yet.</p>';
+ $('undoLastActionBtn').disabled=!undoState;
+ $('undoLastActionBtn').title=undoState?`Undo: ${undoState.label}`:'Nothing to undo in this session';
+
+ const cleared=(state.manualItems||[]).filter(x=>x.type==='expense'&&x.status==='cleared');
  const sums={};
  for(const x of cleared)sums[x.category||'Other']=(sums[x.category||'Other']||0)+Math.abs(+x.amount);
  const entries=Object.entries(sums).sort((a,b)=>b[1]-a[1]);
  $('categoryReport').innerHTML=entries.length?entries.map(([k,v])=>`<div class="report-row"><div></div><div>${k}</div><div class="amt">${money(v)}</div></div>`).join(''):'<p class="muted">No cleared spending yet.</p>';
  $('balanceHistory').innerHTML=(state.balanceHistory||[]).slice().reverse().map(h=>`<div class="history-row"><div>${dstr(h.at)}</div><div class="muted small">${h.note||'Balance checkpoint'}</div><div class="amt">${money(h.amount)}</div></div>`).join('')||'<p class="muted">No balance history yet.</p>';
 }
-async function renderSettings(){
- const snaps=await idbGet('snapshots')||[];
- $('snapshotStatus').innerHTML=`<div><strong>${snaps.length}</strong> local snapshots retained<br><span class="muted small">${snaps[0]?`Latest: ${new Date(snaps[0].createdAt).toLocaleString()} (${snaps[0].reason})`:'No snapshots yet'}</span></div>`;
+function daysSince(iso){return iso?Math.floor((Date.now()-new Date(iso).getTime())/86400000):null}
+function renderSettings(){
+ const last=state.backupMeta?.lastExportAt||null;
+ const age=daysSince(last);
+ $('backupStatus').innerHTML=`<div class="backup-status-grid">
+   <div><div class="muted small">Last manual backup</div><strong>${last?new Date(last).toLocaleString():'No backup recorded'}</strong></div>
+   <div class="backup-age ${age!==null&&age>=14?'backup-warning':''}">${last?(age===0?'Today':`${age} day${age===1?'':'s'} ago`):'Backup recommended'}</div>
+ </div>${age!==null&&age>=14?'<div class="muted small backup-warning" style="margin-top:8px">Backup recommended — your last recorded export is more than 14 days old.</div>':''}`;
+ $('appVersion').textContent=`v${APP_VERSION}`;
+ const pill=$('updateStatus'), detail=$('updateDetail'), apply=$('applyUpdateBtn');
+ pill.className='update-pill';
+ if(updateInfo.status==='available'){
+   pill.textContent=`v${updateInfo.latest} available`;pill.classList.add('available');
+   detail.textContent='A newer hosted Bill Hub version is available. Updating reloads the app shell and keeps IndexedDB financial data intact.';
+   apply.classList.remove('hidden');
+ }else if(updateInfo.status==='ok'){
+   pill.textContent='Up to date';pill.classList.add('ok');
+   detail.textContent=`Installed v${APP_VERSION}. Last checked ${new Date(updateInfo.checkedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}.`;
+   apply.classList.add('hidden');
+ }else if(updateInfo.status==='error'){
+   pill.textContent='Check unavailable';pill.classList.add('error');
+   detail.textContent='Bill Hub could not reach the hosted version file. You can retry or use Force refresh app.';
+   apply.classList.add('hidden');
+ }else{
+   pill.textContent='Checking…';
+   detail.textContent='Bill Hub checks the hosted app for a newer version. Updating never clears IndexedDB financial data.';
+   apply.classList.add('hidden');
+ }
 }
 function renderAll(){
  const setup=!state;
@@ -316,6 +382,8 @@ function renderAll(){
  $('planView').classList.toggle('hidden',setup||currentView!=='planView');
  $('reportsView').classList.toggle('hidden',setup||currentView!=='reportsView');
  $('settingsView').classList.toggle('hidden',setup||currentView!=='settingsView');
+ document.querySelector('.bottomnav').classList.toggle('hidden',setup);
+ $('backupBtn').classList.toggle('hidden',setup);
  if(!state)return;
  fillCategorySelects();
  renderDashboard();renderPlan();renderReports();renderSettings();
@@ -327,7 +395,23 @@ function fillCategorySelects(){
 let currentView='dashboardView';
 document.querySelectorAll('.bottomnav button').forEach(b=>b.addEventListener('click',()=>{
  currentView=b.dataset.view;document.querySelectorAll('.bottomnav button').forEach(x=>x.classList.toggle('active',x===b));renderAll();
+ if(currentView==='settingsView' && (!updateInfo.checkedAt || Date.now()-new Date(updateInfo.checkedAt).getTime()>15*60000))checkForUpdate();
 }));
+
+function openMonthDetail(key){
+ const m=monthBuckets(FORECAST_MONTHS).find(x=>x.key===key);if(!m)return;
+ activeMonthKey=key;
+ $('monthDetailTitle').textContent=m.longLabel;
+ $('monthDetailSub').innerHTML=`${m.net>=0?'+':''}${money(m.net)} net ${m.threePaySources.length?` · <span class="positive">3-paycheck month · ${m.threePaySources.join(', ')}</span>`:''}`;
+ $('monthDetailMath').innerHTML=monthMathHTML(m);
+ $('monthDetailItems').innerHTML=m.items.length?m.items.map(x=>cashItemHTML(x)).join(''):'<div class="empty-month">No projected activity.</div>';
+ $('monthDetailItems').querySelectorAll('.month-cash-item').forEach(el=>el.addEventListener('click',()=>{
+   $('monthDetailDialog').close();openItemDialog(el.dataset.id);
+ }));
+ $('monthDetailDialog').showModal();focusDialogTitle('monthDetailTitle');
+}
+$('closeMonthDetailBtn').addEventListener('click',()=>{$('monthDetailDialog').close();activeMonthKey=null});
+$('viewCurrentMonthBtn').addEventListener('click',e=>openMonthDetail(e.currentTarget.dataset.monthKey));
 
 function itemMonth(x){return (x.overrideMonth||x.date||'').slice(0,7)}
 function recurringRuleForItem(item){
@@ -336,12 +420,12 @@ function recurringRuleForItem(item){
  if(!id) return null;
  return item.type==='income' ? state.incomeRules.find(x=>x.id===id) : state.bills.find(x=>x.id===id);
 }
-function findProjectedItem(id){return projectedItems(12).find(x=>x.id===id)||state.manualItems.find(x=>x.id===id)}
+function findProjectedItem(id){return projectedItems(FORECAST_MONTHS).find(x=>x.id===id)||(state.manualItems||[]).find(x=>x.id===id)}
 function findMonthOverride(item){
  const rid=item.ruleId||item.overrideRuleId;
  if(!rid) return null;
  const month=item.overrideMonth||item.date.slice(0,7);
- return state.manualItems.find(x=>x.overrideRuleId===rid&&(x.overrideMonth||x.date.slice(0,7))===month)||null;
+ return (state.manualItems||[]).find(x=>x.overrideRuleId===rid&&(x.overrideMonth||x.date.slice(0,7))===month)||null;
 }
 function materializeOccurrence(item){
  if(!item.generated){
@@ -362,21 +446,31 @@ function setItemStatusOptions(item){
    $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="pending">Pending / submitted</option><option value="cleared">Cleared</option>';
  }
 }
-
 function focusDialogTitle(id){
  requestAnimationFrame(()=>{
    const el=$(id);
-   if(el){
-     try{el.focus({preventScroll:true})}catch(_){el.focus()}
-   }
+   if(el){try{el.focus({preventScroll:true})}catch(_){el.focus()}}
  });
 }
-
+function canDeleteItem(item){
+ if(!item || item.generated)return false;
+ if(item.overrideRuleId)return false;
+ return ['catchup','extra','reconciliation'].includes(item.kind)||!item.relatedRuleId;
+}
+function itemContextText(item,rule){
+ if(item.kind==='catchup')return `One-time catch-up payment${rule?` tied to ${rule.name}`:''}. Deleting it removes only this entry.`;
+ if(item.kind==='extra')return 'One-time extra. Deleting it removes only this entry.';
+ if(item.kind==='reconciliation')return 'Balance-reconciliation entry created from an unexplained bank-balance difference.';
+ if(item.overrideRuleId)return `${new Date((item.overrideMonth||item.date.slice(0,7))+'-01T12:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'})} only — month-specific override${rule?` for ${rule.name}`:''}. Future months keep the recurring default.`;
+ if(rule)return `Recurring default: ${money(rule.amount)}. Saving here changes this occurrence only; future months keep the recurring default.`;
+ return 'This is a one-time item. Changes apply only to this entry.';
+}
 function openItemDialog(id){
  const item=findProjectedItem(id);if(!item)return;
  activeItem=item;
  const rule=recurringRuleForItem(item);
  $('itemDialogTitle').textContent=item.name;
+ $('itemTypeSummary').innerHTML=entryTags(item);
  $('itemAmount').value=(+item.amount||0).toFixed(2);
  $('itemDate').value=item.date;
  $('itemCategory').value=item.category||'Other';
@@ -384,38 +478,50 @@ function openItemDialog(id){
  $('itemStatus').value=item.status==='skipped'?'upcoming':(item.status||'upcoming');
  const isPool=item.kind==='pool';
  $('itemAmountLabel').childNodes[0].nodeValue=isPool?'Remaining this period ':'Amount ';
- $('itemRuleNote').innerHTML=rule
-   ? `Recurring default: <strong>${money(rule.amount)}</strong>. Saving here changes <strong>this occurrence only</strong>; future months keep the recurring default.`
-   : 'This is a one-time item. Changes apply only to this entry.';
+ $('itemRuleNote').textContent=itemContextText(item,rule);
  const directRecurringId=item.ruleId||item.overrideRuleId;
  $('editRecurringFromItemBtn').classList.toggle('hidden',!directRecurringId);
+ $('editRecurringFromItemBtn').textContent=item.type==='income'?'Edit recurring income':'Edit recurring bill';
  $('addCatchupBtn').classList.toggle('hidden',item.type==='income');
  $('skipMonthBtn').classList.toggle('hidden',!directRecurringId);
+ $('deleteItemBtn').classList.toggle('hidden',!canDeleteItem(item));
  $('itemDialog').showModal();focusDialogTitle('itemDialogTitle');
 }
 $('closeItemBtn').addEventListener('click',()=>{$('itemDialog').close();activeItem=null});
 $('itemForm').addEventListener('submit',async e=>{
  e.preventDefault();if(!activeItem)return;
- await makeSnapshot('before month edit');
- const m=materializeOccurrence(activeItem);
- m.amount=Math.abs(+$('itemAmount').value||0);
- m.date=$('itemDate').value;
- m.category=$('itemCategory').value;
- m.status=$('itemStatus').value;
- m.clearedAt=(m.status==='cleared'||m.status==='received')?new Date().toISOString():null;
- m.reconciled=false;
- await save();$('itemDialog').close();activeItem=null;
+ const originalName=activeItem.name;
+ await commitAction('Month entry updated',`${originalName} · ${$('itemDate').value}`,async()=>{
+   const m=materializeOccurrence(activeItem);
+   m.amount=Math.abs(+$('itemAmount').value||0);
+   m.date=$('itemDate').value;
+   m.category=$('itemCategory').value;
+   m.status=$('itemStatus').value;
+   m.clearedAt=(m.status==='cleared'||m.status==='received')?nowISO():null;
+   m.reconciled=false;
+ });
+ $('itemDialog').close();activeItem=null;
 });
 $('skipMonthBtn').addEventListener('click',async()=>{
  if(!activeItem)return;
- const rule=recurringRuleForItem(activeItem);
- if(!rule)return;
+ const rule=recurringRuleForItem(activeItem);if(!rule)return;
  if(!confirm(`Skip ${activeItem.name} for this occurrence only? Future recurring months will remain unchanged.`))return;
- await makeSnapshot('before skip month');
- const m=materializeOccurrence(activeItem);
- m.originalAmount=m.originalAmount||m.amount;
- m.amount=0;m.status='skipped';m.clearedAt=null;m.reconciled=true;
- await save();$('itemDialog').close();activeItem=null;
+ const name=activeItem.name;
+ await commitAction('Month skipped',name,async()=>{
+   const m=materializeOccurrence(activeItem);
+   m.originalAmount=m.originalAmount||m.amount;
+   m.amount=0;m.status='skipped';m.clearedAt=null;m.reconciled=true;
+ });
+ $('itemDialog').close();activeItem=null;
+});
+$('deleteItemBtn').addEventListener('click',async()=>{
+ if(!activeItem||!canDeleteItem(activeItem))return;
+ const name=activeItem.name;
+ if(!confirm(`Delete “${name}”? This removes only this one-time/manual entry.`))return;
+ await commitAction('Entry deleted',name,async()=>{
+   state.manualItems=(state.manualItems||[]).filter(x=>x.id!==activeItem.id);
+ });
+ $('itemDialog').close();activeItem=null;
 });
 $('editRecurringFromItemBtn').addEventListener('click',()=>{
  if(!activeItem)return;
@@ -426,25 +532,23 @@ $('editRecurringFromItemBtn').addEventListener('click',()=>{
 });
 $('addCatchupBtn').addEventListener('click',()=>{
  if(!activeItem)return;
- const rid=activeItem.ruleId||activeItem.overrideRuleId||null;
+ const rid=activeItem.ruleId||activeItem.overrideRuleId||activeItem.relatedRuleId||null;
  extraRelatedRuleId=rid;
+ $('extraForm').reset();
  $('extraDialogTitle').textContent='Add extra / catch-up payment';
  $('extraName').value=`${activeItem.name} – Catch-up`;
- $('extraAmount').value='';
  $('extraDate').value=activeItem.date||todayISO();
  $('extraCategory').value=activeItem.category||'Other';
  $('extraStatus').value='upcoming';
  $('itemDialog').close();$('extraDialog').showModal();focusDialogTitle('extraDialogTitle');
 });
 
-$('forecastMonths').addEventListener('change',()=>{state.preferences.forecastMonths=+$('forecastMonths').value;save()});
 $('updateBalanceBtn').addEventListener('click',()=>{
  $('newBalanceInput').value=state.balance.amount.toFixed(2);$('reconcilePreview').classList.add('hidden');$('balanceDialog').showModal();focusDialogTitle('balanceDialogTitle');
 });
 $('newBalanceInput').addEventListener('input',()=>{
- const newBal=+$('newBalanceInput').value;
- if(!Number.isFinite(newBal))return;
- const events=state.manualItems.filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
+ const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
+ const events=(state.manualItems||[]).filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
  let expected=+state.balance.amount;
  for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
  const diff=newBal-expected;
@@ -454,37 +558,44 @@ $('newBalanceInput').addEventListener('input',()=>{
 $('balanceForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
- const events=state.manualItems.filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
- let expected=+state.balance.amount;
- for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
- const diff=+(newBal-expected).toFixed(2);
- events.forEach(x=>x.reconciled=true);
- if(Math.abs(diff)>=0.01){
-   state.manualItems.push({
-     id:uid(),type:diff<0?'expense':'income',kind:'reconciliation',
-     name:diff<0?'Misc Daily':'Uncategorized Credit',
-     category:diff<0?'Miscellaneous':'Other',amount:Math.abs(diff),date:todayISO(),
-     status:diff<0?'cleared':'received',clearedAt:new Date().toISOString(),reconciled:true,generated:false
-   });
- }
- state.balance={amount:newBal,updatedAt:new Date().toISOString()};
- state.balanceHistory.push({at:state.balance.updatedAt,amount:newBal,note:'Daily balance update'});
- await makeSnapshot('before balance update');
- await save();$('balanceDialog').close();
+ const oldBal=+state.balance.amount;
+ await commitAction('Balance updated',`${money(oldBal)} → ${money(newBal)}`,async()=>{
+   const events=(state.manualItems||[]).filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
+   let expected=+state.balance.amount;
+   for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
+   const diff=+(newBal-expected).toFixed(2);
+   events.forEach(x=>x.reconciled=true);
+   if(Math.abs(diff)>=0.01){
+     state.manualItems.push({
+       id:uid(),type:diff<0?'expense':'income',kind:'reconciliation',
+       name:diff<0?'Misc Daily':'Uncategorized Credit',
+       category:diff<0?'Miscellaneous':'Other',amount:Math.abs(diff),date:todayISO(),
+       status:diff<0?'cleared':'received',clearedAt:nowISO(),reconciled:true,generated:false
+     });
+   }
+   state.balance={amount:newBal,updatedAt:nowISO()};
+   state.balanceHistory.push({at:state.balance.updatedAt,amount:newBal,note:'Daily balance update'});
+ });
+ $('balanceDialog').close();
 });
 
-$('addExtraBtn').addEventListener('click',()=>{extraRelatedRuleId=null;$('extraDialogTitle').textContent='Add one-time extra';$('extraForm').reset();$('extraDate').value=todayISO();$('extraDialog').showModal();focusDialogTitle('extraDialogTitle')});
+$('addExtraBtn').addEventListener('click',()=>{
+ extraRelatedRuleId=null;$('extraDialogTitle').textContent='Add one-time extra';$('extraForm').reset();$('extraDate').value=todayISO();$('extraDialog').showModal();focusDialogTitle('extraDialogTitle');
+});
 $('extraForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const status=$('extraStatus').value;
- state.manualItems.push({id:uid(),type:'expense',kind:extraRelatedRuleId?'catchup':'extra',name:$('extraName').value.trim(),amount:+$('extraAmount').value,date:$('extraDate').value,category:$('extraCategory').value,status,relatedRuleId:extraRelatedRuleId||null,clearedAt:status==='cleared'?new Date().toISOString():null,reconciled:false,generated:false});
- await save();$('extraDialog').close();e.target.reset();extraRelatedRuleId=null;
+ const name=$('extraName').value.trim();
+ const kind=extraRelatedRuleId?'catchup':'extra';
+ await commitAction(kind==='catchup'?'Catch-up added':'Extra added',name,async()=>{
+   state.manualItems.push({id:uid(),type:'expense',kind,name,amount:+$('extraAmount').value,date:$('extraDate').value,category:$('extraCategory').value,status,relatedRuleId:extraRelatedRuleId||null,clearedAt:status==='cleared'?nowISO():null,reconciled:false,generated:false});
+ });
+ $('extraDialog').close();e.target.reset();extraRelatedRuleId=null;
 });
 
 $('addBillBtn').addEventListener('click',()=>openRuleDialog(null));
 function openRuleDialog(id=null){
- editingRuleId=id;
- $('ruleForm').reset();
+ editingRuleId=id;$('ruleForm').reset();
  const r=id?state.bills.find(x=>x.id===id):null;
  $('ruleDialogTitle').textContent=r?'Edit recurring bill':'Add recurring item';
  if(r){
@@ -501,11 +612,14 @@ function toggleRuleFields(){
  $('anchorField').classList.toggle('hidden',s!=='biweekly');
 }
 $('ruleForm').addEventListener('submit',async e=>{
- e.preventDefault();await makeSnapshot(editingRuleId?'before recurring bill edit':'before recurring bill add');
+ e.preventDefault();
  const values={name:$('ruleName').value.trim(),amount:+$('ruleAmount').value,category:$('ruleCategory').value,kind:$('ruleKind').value,schedule:$('ruleSchedule').value,day:+$('ruleDay').value||null,anchor:$('ruleAnchor').value||null,active:true};
- if(editingRuleId){const r=state.bills.find(x=>x.id===editingRuleId);if(r)Object.assign(r,values)}
- else state.bills.push({id:uid(),...values});
- await save();$('ruleDialog').close();e.target.reset();editingRuleId=null;
+ const label=editingRuleId?'Recurring bill updated':'Recurring bill added';
+ await commitAction(label,values.name,async()=>{
+   if(editingRuleId){const r=state.bills.find(x=>x.id===editingRuleId);if(r)Object.assign(r,values)}
+   else state.bills.push({id:uid(),...values});
+ });
+ $('ruleDialog').close();e.target.reset();editingRuleId=null;
 });
 $('addIncomeBtn').addEventListener('click',()=>openIncomeDialog(null));
 function openIncomeDialog(id=null){
@@ -518,22 +632,30 @@ function openIncomeDialog(id=null){
 }
 $('incomeSchedule').addEventListener('change',()=>{$('incomeAnchorField').classList.toggle('hidden',$('incomeSchedule').value!=='biweekly')});
 $('incomeForm').addEventListener('submit',async e=>{
- e.preventDefault();await makeSnapshot(editingIncomeId?'before recurring income edit':'before recurring income add');
+ e.preventDefault();
  const values={name:$('incomeName').value.trim(),amount:+$('incomeAmount').value,schedule:$('incomeSchedule').value,anchor:$('incomeAnchor').value||null,active:true};
- if(editingIncomeId){const r=state.incomeRules.find(x=>x.id===editingIncomeId);if(r)Object.assign(r,values)}
- else state.incomeRules.push({id:uid(),...values});
- await save();$('incomeDialog').close();e.target.reset();editingIncomeId=null;
+ const label=editingIncomeId?'Recurring income updated':'Recurring income added';
+ await commitAction(label,values.name,async()=>{
+   if(editingIncomeId){const r=state.incomeRules.find(x=>x.id===editingIncomeId);if(r)Object.assign(r,values)}
+   else state.incomeRules.push({id:uid(),...values});
+ });
+ $('incomeDialog').close();e.target.reset();editingIncomeId=null;
 });
 
-$('seedImport').addEventListener('change',async e=>{
- const f=e.target.files[0];if(!f)return;
+async function importSeedFile(f){
+ if(!f)return;
  try{
-   const obj=JSON.parse(await f.text());
+   let obj=JSON.parse(await f.text());
    if(!obj.version||!obj.categories)throw new Error('Not a Bill Hub seed');
-   state=obj;await idbSet('state',state);await makeSnapshot('seed import');renderAll();
+   obj=migrateData(obj);
+   state=obj;undoState=null;logActivity('Private seed imported',f.name);
+   await idbSet('state',state);renderAll();showToast('Private seed imported',false);
  }catch(err){alert('Could not import seed: '+err.message)}
+}
+$('seedImport').addEventListener('change',e=>importSeedFile(e.target.files[0]));
+$('startBlankBtn').addEventListener('click',async()=>{
+ state=blankState();logActivity('Blank setup created','New local Bill Hub data');await idbSet('state',state);renderAll();
 });
-$('startBlankBtn').addEventListener('click',async()=>{state=blankState();await idbSet('state',state);await makeSnapshot('blank setup');renderAll()});
 
 async function deriveKey(pass,salt){
  const enc=new TextEncoder(), material=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveKey']);
@@ -542,196 +664,147 @@ async function deriveKey(pass,salt){
 function b64(buf){return btoa(String.fromCharCode(...new Uint8Array(buf)))}
 function unb64(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0))}
 async function encryptedExport(){
+ if(!state)return;
  const pass=prompt('Create a backup passphrase. You will need it to restore this backup.');
  if(!pass)return;
+ const exportedAt=nowISO();
+ state.backupMeta=state.backupMeta||{};
+ state.backupMeta.lastExportAt=exportedAt;
+ state.backupMeta.lastExportVersion=APP_VERSION;
+ logActivity('Backup exported','Encrypted manual backup created');
+ await idbSet('state',state);
+ renderAll();
  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),key=await deriveKey(pass,salt);
  const data=new TextEncoder().encode(JSON.stringify(state));
  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,data);
  const payload={format:'billhub-encrypted-v1',salt:b64(salt),iv:b64(iv),data:b64(ct)};
  const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});
- const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`BillHub_Backup_${todayISO()}.bhub`;a.click();URL.revokeObjectURL(a.href);
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`BillHub_Backup_${todayISO()}.bhub`;a.click();
+ setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ showToast('Encrypted backup created',false);
 }
-$('backupBtn').addEventListener('click',encryptedExport);$('exportBackupBtn').addEventListener('click',encryptedExport);
-$('restoreBackupInput').addEventListener('change',async e=>{
- const f=e.target.files[0];if(!f)return;
+$('backupBtn').addEventListener('click',encryptedExport);
+$('exportBackupBtn').addEventListener('click',encryptedExport);
+
+async function readEncryptedBackup(f){
+ const payload=JSON.parse(await f.text());if(payload.format!=='billhub-encrypted-v1')throw new Error('Unsupported backup');
+ const pass=prompt('Backup passphrase');if(!pass)throw new Error('Canceled');
+ const key=await deriveKey(pass,unb64(payload.salt));
+ const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(payload.iv)},key,unb64(payload.data));
+ const raw=JSON.parse(new TextDecoder().decode(pt));
+ const sourceVersion=raw.version||'Unknown';
+ const restored=migrateData(raw);
+ restored.__restoreSourceVersion=sourceVersion;
+ return restored;
+}
+function showRestorePreview(restored,fileName,fileModifiedAt=null){
+ pendingRestore={state:restored,fileName};
+ const created=restored.backupMeta?.lastExportAt||(fileModifiedAt?new Date(fileModifiedAt).toISOString():null)||restored.createdAt||null;
+ $('restorePreviewBody').innerHTML=`
+   <div class="restore-label">Backup file</div><div class="restore-value">${fileName}</div>
+   <div class="restore-label">Backup created</div><div class="restore-value">${created?new Date(created).toLocaleString():'Unknown'}</div>
+   <div class="restore-label">Backup app version</div><div class="restore-value">v${restored.__restoreSourceVersion||restored.version||'Unknown'}</div>
+   <div class="restore-label">Balance checkpoint</div><div class="restore-value">${money(restored.balance?.amount||0)}</div>
+   <div class="restore-label">Recurring bills</div><div class="restore-value">${(restored.bills||[]).length}</div>
+   <div class="restore-label">Income sources</div><div class="restore-value">${(restored.incomeRules||[]).length}</div>`;
+ $('restorePreviewDialog').showModal();focusDialogTitle('restorePreviewTitle');
+}
+async function handleRestoreFile(f,input){
+ if(!f)return;
+ try{showRestorePreview(await readEncryptedBackup(f),f.name,f.lastModified)}
+ catch(err){if(err.message!=='Canceled')alert('Restore failed. Check the file and passphrase.')}
+ finally{if(input)input.value=''}
+}
+$('restoreBackupInput').addEventListener('change',e=>handleRestoreFile(e.target.files[0],e.target));
+$('setupRestoreBackupInput').addEventListener('change',e=>handleRestoreFile(e.target.files[0],e.target));
+$('cancelRestoreBtn').addEventListener('click',()=>{$('restorePreviewDialog').close();pendingRestore=null});
+$('confirmRestoreBtn').addEventListener('click',async()=>{
+ if(!pendingRestore)return;
+ const fileName=pendingRestore.fileName;
+ if(state)prepareUndo('Restore backup');
+ state=structuredClone(pendingRestore.state);
+ delete state.__restoreSourceVersion;
+ state.activity=state.activity||[];
+ logActivity('Backup restored',fileName);
+ await idbSet('state',state);
+ pendingRestore=null;$('restorePreviewDialog').close();renderAll();showToast('Backup restored',!!undoState);
+});
+
+$('resetBtn').addEventListener('click',()=>{
+ $('resetConfirmInput').value='';$('confirmResetBtn').disabled=true;$('resetDialog').showModal();focusDialogTitle('resetDialogTitle');
+});
+$('cancelResetBtn').addEventListener('click',()=>{$('resetDialog').close()});
+$('backupBeforeResetBtn').addEventListener('click',encryptedExport);
+$('resetConfirmInput').addEventListener('input',()=>{$('confirmResetBtn').disabled=$('resetConfirmInput').value.trim().toUpperCase()!=='DELETE'});
+$('confirmResetBtn').addEventListener('click',async()=>{
+ if($('resetConfirmInput').value.trim().toUpperCase()!=='DELETE')return;
+ await idbDel('state');
+ try{await idbDel('snapshots')}catch(_){ }
+ state=null;undoState=null;$('resetDialog').close();renderAll();showToast('Local Bill Hub data deleted',false);
+});
+
+$('undoLastActionBtn').addEventListener('click',undoLastAction);
+$('toastUndoBtn').addEventListener('click',undoLastAction);
+
+function parseVersion(v){return String(v||'0').split('.').map(x=>parseInt(x,10)||0)}
+function compareVersions(a,b){
+ const A=parseVersion(a),B=parseVersion(b),n=Math.max(A.length,B.length);
+ for(let i=0;i<n;i++){if((A[i]||0)>(B[i]||0))return 1;if((A[i]||0)<(B[i]||0))return -1}
+ return 0;
+}
+async function checkForUpdate(){
+ updateInfo.status='checking';if(state)renderSettings();
  try{
-   const payload=JSON.parse(await f.text());if(payload.format!=='billhub-encrypted-v1')throw new Error('Unsupported backup');
-   const pass=prompt('Backup passphrase');if(!pass)return;
-   const key=await deriveKey(pass,unb64(payload.salt));
-   const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(payload.iv)},key,unb64(payload.data));
-   const restored=JSON.parse(new TextDecoder().decode(pt));
-   await makeSnapshot('before restore');state=restored;await idbSet('state',state);await makeSnapshot('restored backup');renderAll();
- }catch(err){alert('Restore failed. Check the file and passphrase.')}
+   const r=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);
+   const j=await r.json();if(!j.version)throw new Error('Missing version');
+   updateInfo={status:compareVersions(j.version,APP_VERSION)>0?'available':'ok',latest:j.version,checkedAt:nowISO(),error:null};
+ }catch(err){updateInfo={status:'error',latest:null,checkedAt:nowISO(),error:err.message}}
+ if(state)renderSettings();
+}
+async function forceRefreshApp(){
+ const btn=$('forceRefreshBtn');btn.disabled=true;btn.textContent='Refreshing…';
+ try{
+   if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
+   if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())try{await r.update()}catch(_){ }}
+ }finally{window.location.reload()}
+}
+$('checkUpdateBtn').addEventListener('click',checkForUpdate);
+$('applyUpdateBtn').addEventListener('click',forceRefreshApp);
+$('forceRefreshBtn').addEventListener('click',forceRefreshApp);
+document.addEventListener('visibilitychange',()=>{
+ if(document.visibilityState==='visible' && (!updateInfo.checkedAt||Date.now()-new Date(updateInfo.checkedAt).getTime()>15*60000))checkForUpdate();
 });
-$('restoreSnapshotBtn').addEventListener('click',async()=>{
- const snaps=await idbGet('snapshots')||[];if(!snaps.length)return alert('No local snapshots.');
- const lines=snaps.slice(0,10).map((s,i)=>`${i+1}. ${new Date(s.createdAt).toLocaleString()} — ${s.reason}`).join('\n');
- const n=+(prompt('Restore which snapshot?\n'+lines)||0);if(!n||!snaps[n-1])return;
- await makeSnapshot('before snapshot restore');state=structuredClone(snaps[n-1].state);await idbSet('state',state);renderAll();
-});
-$('resetBtn').addEventListener('click',async()=>{
- if(!confirm('Reset all local Bill Hub data? A snapshot will be created first.'))return;
- await makeSnapshot('before reset');await idbDel('state');state=null;renderAll();
-});
 
-
-async function migrateState(){
- if(!state) return false;
- let changed=false;
- // v0.1.2: the initial 8/21 balance explicitly included the Midcon 8/21 paycheck.
- const note=(state.balanceHistory||[]).map(x=>x.note||'').join(' ').toLowerCase();
- const midcon=(state.incomeRules||[]).find(x=>x.name.toLowerCase()==='midcon');
- const hasOverride=(state.manualItems||[]).some(x=>x.type==='income'&&x.overrideRuleId===midcon?.id&&x.date==='2026-08-21');
- if(midcon&&note.includes('includes 8/21 midcon')&&!hasOverride){
-   state.manualItems.push({
-     id:uid(),type:'income',kind:'paycheck',name:'Midcon',category:'Income',
-     amount:+midcon.amount,date:'2026-08-21',status:'received',
-     overrideRuleId:midcon.id,clearedAt:state.balance.updatedAt||new Date().toISOString(),
-     reconciled:true,generated:false
-   });
-   changed=true;
- }
- // v0.1.3: August Groceries/Fuel values are remaining pool balances, not submitted payments.
- for(const x of (state.manualItems||[])){
-   if(x.name==='Groceries – August pending' || x.name==='Groceries – August remaining'){
-     x.name='Groceries – August remaining';
-     x.status='upcoming';
-     x.kind='pool';
-     x.category='Food';
-     x.clearedAt=null;
-     x.reconciled=false;
-     changed=true;
-   }
-   if(x.name==='Fuel – August pending' || x.name==='Fuel – August remaining'){
-     x.name='Fuel – August remaining';
-     x.status='upcoming';
-     x.kind='pool';
-     x.category='Fuel';
-     x.clearedAt=null;
-     x.reconciled=false;
-     changed=true;
-   }
- }
- // v0.2.0: August pool balances replace, rather than add to, the normal second-half allocations.
- const grocery2=(state.bills||[]).find(x=>x.name==='Groceries – second half');
- const fuel2=(state.bills||[]).find(x=>x.name==='Fuel – second half');
- for(const x of (state.manualItems||[])){
-   if(x.name==='Groceries – August remaining'&&grocery2&&x.overrideRuleId!==grocery2.id){x.overrideRuleId=grocery2.id;x.overrideMonth='2026-08';changed=true}
-   if(x.name==='Fuel – August remaining'&&fuel2&&x.overrideRuleId!==fuel2.id){x.overrideRuleId=fuel2.id;x.overrideMonth='2026-08';changed=true}
-   if(x.overrideRuleId&&!x.overrideMonth){x.overrideMonth=(x.date||'').slice(0,7);changed=true}
- }
- // v0.2.1: month ending balance simply rolls into the next month; no reserve/carryover object.
- if((state.reserves||[]).length){state.reserves=[];changed=true}
-
- // T Car was not an August remaining obligation at the 8/21 checkpoint.
- const tcar=(state.bills||[]).find(x=>x.name==='T Car');
- if(tcar){
-   const hasAugTCarOverride=(state.manualItems||[]).some(x=>x.overrideRuleId===tcar.id&&(x.overrideMonth||x.date?.slice(0,7))==='2026-08');
-   if(!hasAugTCarOverride){
-     state.manualItems.push({
-       id:uid(),type:'expense',kind:'bill',name:'T Car – August',
-       category:tcar.category||'Vehicles',amount:0,date:'2026-08-25',
-       status:'skipped',overrideRuleId:tcar.id,overrideMonth:'2026-08',
-       clearedAt:null,reconciled:true,generated:false
-     });
-     changed=true;
-   }
- }
-
- // v0.2.2: robust August overrides and week-4 forecast timing.
- const sf=(state.bills||[]).find(x=>x.name==='State Farm');
- const g2=(state.bills||[]).find(x=>x.name==='Groceries – second half');
- const f2=(state.bills||[]).find(x=>x.name==='Fuel – second half');
-
- for(const x of (state.manualItems||[])){
-   if(x.name==='State Farm – August'&&sf){
-     if(x.overrideRuleId!==sf.id){x.overrideRuleId=sf.id;changed=true}
-     if(x.overrideRuleName!=='State Farm'){x.overrideRuleName='State Farm';changed=true}
-     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
-   }
-   if(x.name==='Groceries – August remaining'&&g2){
-     if(x.overrideRuleId!==g2.id){x.overrideRuleId=g2.id;changed=true}
-     if(x.overrideRuleName!=='Groceries – second half'){x.overrideRuleName='Groceries – second half';changed=true}
-     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
-   }
-   if(x.name==='Fuel – August remaining'&&f2){
-     if(x.overrideRuleId!==f2.id){x.overrideRuleId=f2.id;changed=true}
-     if(x.overrideRuleName!=='Fuel – second half'){x.overrideRuleName='Fuel – second half';changed=true}
-     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
-   }
-   if(x.name==='T Car – August'){
-     if(x.overrideRuleName!=='T Car'){x.overrideRuleName='T Car';changed=true}
-     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
-   }
-
-   // The original spreadsheet grouped these remaining items in the week-4/pay-period bucket.
-   // Their contractual due day is kept separately for reference.
-   const week4 = {
-     'M Car – August':15,
-     'Mortgage – August':15,
-     'Natural Gas – August actual':20,
-     'Electric – August actual':20
-   };
-   if(week4[x.name]){
-     if(x.date!=='2026-08-25'){x.date='2026-08-25';changed=true}
-     if(x.dueDay!==week4[x.name]){x.dueDay=week4[x.name];changed=true}
-   }
-   if(x.name==='Taxes – August extra'&&x.dueDay!==25){x.dueDay=25;changed=true}
-   if(x.name==='Credit One – August'&&x.dueDay!==28){x.dueDay=28;changed=true}
- }
-
- // v0.3.0: August 25 CSS is a one-time $2,500 occurrence; normal CSS remains $2,425.
- const cssRule=(state.incomeRules||[]).find(x=>x.name==='CSS');
- if(cssRule){
-   let augCss=(state.manualItems||[]).find(x=>
-     x.type==='income' &&
-     (x.overrideRuleId===cssRule.id || x.overrideRuleName==='CSS') &&
-     (x.overrideMonth||x.date?.slice(0,7))==='2026-08'
-   );
-   if(!augCss){
-     state.manualItems.push({
-       id:uid(),type:'income',kind:'paycheck',name:'CSS',category:'Income',
-       amount:2500,date:'2026-08-25',status:'upcoming',
-       overrideRuleId:cssRule.id,overrideRuleName:'CSS',overrideMonth:'2026-08',
-       clearedAt:null,reconciled:false,generated:false
-     });
-     changed=true;
-   }else{
-     if(+augCss.amount!==2500){augCss.amount=2500;changed=true}
-     if(augCss.date!=='2026-08-25'){augCss.date='2026-08-25';changed=true}
-     if(augCss.status!=='upcoming'){augCss.status='upcoming';changed=true}
-     if(augCss.overrideRuleId!==cssRule.id){augCss.overrideRuleId=cssRule.id;changed=true}
-     if(augCss.overrideRuleName!=='CSS'){augCss.overrideRuleName='CSS';changed=true}
-     if(augCss.overrideMonth!=='2026-08'){augCss.overrideMonth='2026-08';changed=true}
-   }
- }
-
- // Match the user's August pay-period layout:
- // only Maverick + Apple sit before the 8/25 CSS check; week-4 commitments sit on/after 8/25.
- const aug25Names=new Set([
-   'Groceries – August remaining','Fuel – August remaining','State Farm – August','Affirm',
-   'M Car – August','Mortgage – August','Natural Gas – August actual',
-   'Electric – August actual','Taxes – August extra'
- ]);
- for(const x of (state.manualItems||[])){
-   if(aug25Names.has(x.name) && x.date!=='2026-08-25'){x.date='2026-08-25';changed=true}
-   if(x.name==='Maverick Football' && x.date!=='2026-08-21'){x.date='2026-08-21';changed=true}
-   if(x.name==='Apple – August actual' && x.date!=='2026-08-21'){x.date='2026-08-21';changed=true}
-   if(x.name==='Credit One – August' && x.date!=='2026-08-28'){x.date='2026-08-28';changed=true}
- }
-
- if(state.version!=='0.3.2'){state.version='0.3.2';changed=true}
- if(changed) await idbSet('state',state);
- return changed;
+function migrateData(s){
+ if(!s)return s;
+ // v0.4.0 intentionally performs only generic schema normalization.
+ // Financial rules, amounts, names, statuses, and month overrides are never rewritten by app migration code.
+ s.categories=s.categories||blankState().categories;
+ s.balance=s.balance||{amount:0,updatedAt:null};
+ s.balanceHistory=s.balanceHistory||[];
+ s.bills=s.bills||[];
+ s.incomeRules=s.incomeRules||[];
+ s.manualItems=s.manualItems||[];
+ s.reconciledEventIds=s.reconciledEventIds||[];
+ s.reserves=[];
+ s.preferences=s.preferences||{};
+ if('forecastMonths' in s.preferences)delete s.preferences.forecastMonths;
+ s.activity=s.activity||[];
+ s.backupMeta=s.backupMeta||{lastExportAt:null,lastExportVersion:null};
+ s.version=APP_VERSION;
+ return s;
 }
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 (async()=>{
- await openDB();state=await idbGet('state')||null;
+ await openDB();
+ try{await idbDel('snapshots')}catch(_){ }
+ state=await idbGet('state')||null;
  if(state){
-   await makeSnapshot('app open');
-   await migrateState();
-   $('forecastMonths').value=String(state.preferences?.forecastMonths||6);
+   const beforeVersion=state.version;
+   state=migrateData(state);
+   if(beforeVersion!==state.version)await idbSet('state',state);
  }
  renderAll();
+ checkForUpdate();
 })();

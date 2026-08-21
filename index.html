@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#111317" />
   <title>Bill Hub</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=0.4.0" />
 </head>
 <body>
   <header class="topbar">
@@ -20,9 +20,12 @@
   <main id="app">
     <section id="setupView" class="panel hidden">
       <h2>Set up Bill Hub</h2>
-      <p class="muted">The app shell contains no personal financial data. Import your private seed file or start blank.</p>
+      <p class="muted">The app shell contains no personal financial data. Restore an encrypted Bill Hub backup, import a private seed, or start blank.</p>
       <div class="stack">
-        <label class="filebtn">Import private seed
+        <label class="filebtn">Restore encrypted backup
+          <input id="setupRestoreBackupInput" type="file" accept=".bhub,.json,application/json" />
+        </label>
+        <label class="filebtn secondary">Import private seed
           <input id="seedImport" type="file" accept=".json,application/json" />
         </label>
         <button id="startBlankBtn" class="secondary">Start blank</button>
@@ -57,33 +60,39 @@
         </article>
       </div>
 
-      <article class="panel">
+      <article class="panel current-month-panel">
         <div class="panel-head">
           <div>
-            <h2>Rolling forecast</h2>
-            <p class="muted">Actual balance anchors the present. Everything after it is forecast.</p>
+            <div class="eyebrow">THIS MONTH</div>
+            <div id="thisMonthTitle" class="section-title-line"></div>
           </div>
-          <select id="forecastMonths">
-            <option value="3">3 months</option>
-            <option value="6" selected>6 months</option>
-            <option value="12">12 months</option>
-          </select>
+          <button id="viewCurrentMonthBtn" class="secondary compact-btn">View month</button>
         </div>
-        <div class="forecast-headings">
-          <span>Month</span><span>Start</span><span>Income</span><span>Out</span><span>End</span>
-        </div>
-        <div id="monthCards" class="forecast-list"></div>
+        <div id="thisMonthStats" class="month-math current-month-math"></div>
       </article>
 
       <article class="panel">
         <div class="panel-head">
           <div>
-            <h2>Monthly cash flow</h2>
-            <p class="muted">Each month is separate. Open a month to see its income, bills, pools, and running balance.</p>
+            <h2>Next up</h2>
+            <p class="muted">The next cash-flow events from your current balance checkpoint.</p>
           </div>
-          <button id="addExtraBtn" class="secondary">+ Extra</button>
+          <button id="addExtraBtn" class="secondary compact-btn">+ Extra</button>
         </div>
-        <div id="timeline" class="monthly-flow"></div>
+        <div id="nextUpList" class="next-up-list"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Six-month outlook</h2>
+            <p class="muted">Current month plus the next five. Tap any month for the detailed cash flow.</p>
+          </div>
+        </div>
+        <div class="forecast-headings">
+          <span>Month</span><span>Start</span><span>Income</span><span>Out</span><span>End</span>
+        </div>
+        <div id="monthCards" class="forecast-list"></div>
       </article>
     </section>
 
@@ -113,6 +122,16 @@
 
     <section id="reportsView" class="hidden">
       <article class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Recent activity</h2>
+            <p class="muted">Recent changes made inside Bill Hub.</p>
+          </div>
+          <button id="undoLastActionBtn" class="secondary compact-btn" disabled>Undo last</button>
+        </div>
+        <div id="recentActivity"></div>
+      </article>
+      <article class="panel">
         <h2>Category tracking</h2>
         <p class="muted">Cleared and reconciled spending only. Forecast commitments are excluded.</p>
         <div id="categoryReport"></div>
@@ -125,14 +144,32 @@
 
     <section id="settingsView" class="hidden">
       <article class="panel">
-        <h2>Data protection</h2>
-        <div id="snapshotStatus" class="setting-row"></div>
+        <h2>Backup & restore</h2>
+        <div id="backupStatus" class="setting-row"></div>
         <div class="button-grid">
           <button id="exportBackupBtn">Export encrypted backup</button>
           <label class="filebtn secondary">Restore encrypted backup
             <input id="restoreBackupInput" type="file" accept=".bhub,.json,application/json" />
           </label>
-          <button id="restoreSnapshotBtn" class="secondary">Restore local snapshot</button>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>App update</h2>
+        <div class="update-summary">
+          <div>
+            <div class="muted small">Installed version</div>
+            <strong id="appVersion">v0.4.0</strong>
+          </div>
+          <div class="update-status-wrap">
+            <span id="updateStatus" class="update-pill">Checking…</span>
+          </div>
+        </div>
+        <p id="updateDetail" class="muted small">Bill Hub checks the hosted app for a newer version. Updating never clears IndexedDB financial data.</p>
+        <div class="button-grid update-buttons">
+          <button id="checkUpdateBtn" class="secondary">Check for update</button>
+          <button id="applyUpdateBtn" class="hidden">Update & reload</button>
+          <button id="forceRefreshBtn" class="secondary">Force refresh app</button>
         </div>
       </article>
 
@@ -151,9 +188,29 @@
     <button data-view="settingsView">Settings</button>
   </nav>
 
+  <div id="toast" class="toast hidden" role="status" aria-live="polite">
+    <span id="toastText"></span>
+    <button id="toastUndoBtn" class="toast-undo hidden">Undo</button>
+  </div>
+
+  <dialog id="monthDetailDialog">
+    <div class="dialog-shell">
+      <div class="dialog-head">
+        <div>
+          <h3 id="monthDetailTitle" tabindex="-1">Month details</h3>
+          <div id="monthDetailSub" class="muted small"></div>
+        </div>
+        <button id="closeMonthDetailBtn" type="button" class="secondary compact-btn">Close</button>
+      </div>
+      <div id="monthDetailMath" class="month-math dialog-month-math"></div>
+      <div id="monthDetailItems" class="month-cash-list dialog-cash-list"></div>
+    </div>
+  </dialog>
+
   <dialog id="itemDialog">
     <form id="itemForm">
       <h3 id="itemDialogTitle" tabindex="-1">Edit cash-flow item</h3>
+      <div id="itemTypeSummary" class="entry-context"></div>
       <div id="itemRuleNote" class="notice"></div>
       <label id="itemAmountLabel">Amount
         <input id="itemAmount" type="number" step="0.01" min="0" required inputmode="decimal" />
@@ -172,6 +229,7 @@
         <button id="editRecurringFromItemBtn" type="button" class="secondary">Edit recurring bill</button>
         <button id="addCatchupBtn" type="button" class="secondary">Add extra / catch-up</button>
         <button id="skipMonthBtn" type="button" class="secondary danger-outline">Skip this month</button>
+        <button id="deleteItemBtn" type="button" class="danger hidden">Delete entry</button>
         <button id="closeItemBtn" type="button" class="secondary">Cancel</button>
       </div>
     </form>
@@ -262,6 +320,34 @@
     </form>
   </dialog>
 
-  <script src="app.js"></script>
+  <dialog id="restorePreviewDialog">
+    <div class="dialog-shell">
+      <h3 id="restorePreviewTitle" tabindex="-1">Restore backup?</h3>
+      <div id="restorePreviewBody" class="restore-preview"></div>
+      <div class="dialog-actions">
+        <button id="cancelRestoreBtn" type="button" class="secondary">Cancel</button>
+        <button id="confirmRestoreBtn" type="button">Restore this backup</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="resetDialog">
+    <div class="dialog-shell">
+      <h3 id="resetDialogTitle" tabindex="-1">Delete all local Bill Hub data?</h3>
+      <div class="danger-notice">
+        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, and local activity stored in this browser. Your encrypted backup files are not affected.
+      </div>
+      <button id="backupBeforeResetBtn" type="button" class="secondary full-btn">Back up first</button>
+      <label class="confirm-label">Type <strong>DELETE</strong> to enable the final reset
+        <input id="resetConfirmInput" autocomplete="off" autocapitalize="characters" />
+      </label>
+      <div class="dialog-actions">
+        <button id="cancelResetBtn" type="button" class="secondary">Cancel</button>
+        <button id="confirmResetBtn" type="button" class="danger" disabled>Delete all local data</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="app.js?v=0.4.0"></script>
 </body>
 </html>
