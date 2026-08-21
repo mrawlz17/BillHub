@@ -135,7 +135,12 @@ function projectedItems(months=6){
  // manual overrides can suppress matching generated occurrence by overrideRuleId/date
  const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
  const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
- gen=gen.filter(x=>!suppressExact.has(`${x.ruleId}|${x.date}`)&&!suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`));
+ const suppressNameMonth=new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||x.date.slice(0,7)}`));
+ gen=gen.filter(x=>
+   !suppressExact.has(`${x.ruleId}|${x.date}`) &&
+   !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
+   !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
+ );
  const items=[...gen,...manuals].sort((a,b)=>a.date.localeCompare(b.date)||(a.type==='income'?-1:1));
  return items;
 }
@@ -151,24 +156,42 @@ function projection(months=6){
  }
  return {items,rows,ending:bal,low,lowDate};
 }
-function monthSummary(months){
- const p=projection(months), startDate=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
+function monthBuckets(months){
+ const items=projectedItems(months);
+ const startDate=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
  let working=+state.balance.amount||0;
  const result=[];
  for(let i=0;i<months;i++){
    const mStart=new Date(startDate.getFullYear(),startDate.getMonth()+i,1,12);
    const mEnd=new Date(startDate.getFullYear(),startDate.getMonth()+i+1,0,12);
-   const isFirst=i===0;
-   let opening=isFirst?+state.balance.amount:working;
+   const opening=working;
    let income=0,expenses=0;
-   for(const x of p.items){
+   const monthItems=[];
+   for(const x of items){
      const dt=new Date(x.date+'T12:00:00');
      if(dt<mStart||dt>mEnd)continue;
      if(x.status==='cleared'||x.status==='received'||x.status==='skipped')continue;
      if(x.type==='income'){income+=+x.amount;working+=+x.amount}
      else {expenses+=Math.abs(+x.amount);working-=Math.abs(+x.amount)}
+     monthItems.push({...x,projectedAfter:working});
    }
-   result.push({month:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),opening,income,expenses,ending:working});
+   const key=`${mStart.getFullYear()}-${String(mStart.getMonth()+1).padStart(2,'0')}`;
+
+   const incomeCounts={};
+   for(const x of monthItems.filter(x=>x.type==='income')){
+     incomeCounts[x.name]=(incomeCounts[x.name]||0)+1;
+   }
+   const threePaySources=(state.incomeRules||[])
+     .filter(r=>r.schedule==='biweekly' && (incomeCounts[r.name]||0)>=3)
+     .map(r=>r.name);
+
+   result.push({
+     key,
+     label:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),
+     longLabel:mStart.toLocaleDateString('en-US',{month:'long',year:'numeric'}),
+     opening,income,expenses,net:income-expenses,ending:working,items:monthItems,
+     incomeCounts,threePaySources
+   });
  }
  return result;
 }
@@ -181,33 +204,77 @@ function statusBadge(x){
 function renderDashboard(){
  $('currentBalance').textContent=money(state.balance.amount);
  $('balanceUpdated').textContent=state.balance.updatedAt?`Updated ${new Date(state.balance.updatedAt).toLocaleString()}`:'Not updated';
- const p=projection(+($('forecastMonths').value||state.preferences.forecastMonths||6));
+
+ const months=+($('forecastMonths').value||state.preferences.forecastMonths||6);
+ const p=projection(months);
+ const buckets=monthBuckets(months);
  lastProjection=p.rows;
+
  const pending=state.manualItems.filter(x=>x.type==='expense'&&x.status==='pending').reduce((s,x)=>s+Math.abs(+x.amount),0);
  $('pendingOutflows').textContent=money(pending);
+
  const ni=p.items.find(x=>x.type==='income'&&x.status!=='received'&&x.status!=='skipped');
  $('nextIncome').textContent=ni?money(ni.amount):'$0.00';
- $('nextIncomeDate').textContent=ni?`${ni.name} · ${dstr(ni.date+'T12:00:00')}`:'—';
+ $('nextIncomeDate').textContent=ni?`${ni.name} · ${dstr(ni.date)}`:'—';
+
  $('lowestBalance').textContent=money(p.low);
  $('lowestBalance').className='metric '+(p.low<0?'negative':'');
  $('lowestBalanceDate').textContent=dstr(p.lowDate);
- const months=+($('forecastMonths').value||6);
- $('monthCards').innerHTML=monthSummary(months).map(m=>`
-   <div class="month-card">
-    <div class="month-title">${m.month}</div>
-    <div class="month-row"><span>Starting</span><span>${money(m.opening)}</span></div>
-    <div class="month-row"><span>Income</span><span class="positive">+${money(m.income)}</span></div>
-    <div class="month-row"><span>Obligations</span><span>-${money(m.expenses)}</span></div>
-    <div class="month-row end"><span>Projected end</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>
+
+ $('monthCards').innerHTML=buckets.map(m=>`
+   <div class="forecast-row">
+     <div class="forecast-month">
+       <div class="forecast-month-line"><strong>${m.label}</strong>${m.threePaySources.length?`<span class="payday-badge">3× ${m.threePaySources.join(', ')}</span>`:''}</div>
+       <span class="muted small">${m.net>=0?'+':''}${money(m.net)} net</span>
+     </div>
+     <div>${money(m.opening)}</div>
+     <div class="positive">+${money(m.income)}</div>
+     <div>-${money(m.expenses)}</div>
+     <div class="forecast-end ${m.ending<0?'negative':''}">${money(m.ending)}</div>
    </div>`).join('');
- const visible=p.items.filter(x=>x.status!=='cleared'&&x.status!=='received'&&x.status!=='skipped').slice(0,40);
- $('timeline').innerHTML=visible.length?visible.map(x=>`
-   <div class="timeline-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}" data-generated="${x.generated?'1':'0'}">
-    <div class="date">${dstr(x.date+'T12:00:00')}</div>
-    <div><strong>${x.name}</strong>${statusBadge(x)}<div class="muted small">${x.category||''}${x.kind==='pool'?' · spending pool':''}</div></div>
-    <div class="amt">${x.type==='income'?'+':'-'}${money(x.amount)}</div>
-   </div>`).join(''):'<p class="muted">No upcoming items.</p>';
- document.querySelectorAll('.timeline-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
+
+ const currentKey=(state.balance.updatedAt?new Date(state.balance.updatedAt):new Date());
+ const currentMonthKey=`${currentKey.getFullYear()}-${String(currentKey.getMonth()+1).padStart(2,'0')}`;
+
+ $('timeline').innerHTML=buckets.map((m,i)=>{
+   const open=m.key===currentMonthKey || i===1;
+   const rows=m.items.length?m.items.map(x=>`
+     <div class="month-cash-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}">
+       <div class="cash-date">${new Date(x.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+       <div class="cash-main">
+         <strong>${x.name}</strong>${statusBadge(x)}
+         <div class="muted small">${x.category||''}${x.kind==='pool'?' · spending pool':''}${x.dueDay?` · due ${x.dueDay}${ordinal(x.dueDay)}`:''}</div>
+       </div>
+       <div class="cash-money">
+         <div class="amt ${x.type==='income'?'positive':''}">${x.type==='income'?'+':'-'}${money(x.amount)}</div>
+         <div class="muted small">after ${money(x.projectedAfter)}</div>
+       </div>
+       <div class="cash-chevron">›</div>
+     </div>`).join(''):'<div class="empty-month">No projected activity.</div>';
+
+   return `
+     <details class="month-flow-card" ${open?'open':''}>
+       <summary>
+         <div class="month-summary-title">
+           <div class="month-title-line"><strong>${m.longLabel}</strong>${m.threePaySources.length?`<span class="payday-badge">3-paycheck month · ${m.threePaySources.join(', ')}</span>`:''}</div>
+           <span class="muted small">Start ${money(m.opening)} · Net ${m.net>=0?'+':''}${money(m.net)}</span>
+         </div>
+         <div class="month-summary-end">
+           <span class="muted small">Projected end</span>
+           <strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong>
+         </div>
+       </summary>
+       <div class="month-math">
+         <div><span>Starting</span><strong>${money(m.opening)}</strong></div>
+         <div><span>Income</span><strong class="positive">+${money(m.income)}</strong></div>
+         <div><span>Outflow</span><strong>-${money(m.expenses)}</strong></div>
+         <div><span>Ending</span><strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong></div>
+       </div>
+       <div class="month-cash-list">${rows}</div>
+     </details>`;
+ }).join('');
+
+ document.querySelectorAll('.month-cash-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
 }
 function renderPlan(){
  const sortedBills=[...state.bills].sort((a,b)=>{
@@ -283,7 +350,7 @@ function materializeOccurrence(item){
  }
  const existing=findMonthOverride(item);
  if(existing)return existing;
- const manual={...item,id:uid(),generated:false,overrideRuleId:item.ruleId,overrideMonth:item.date.slice(0,7),reconciled:false};
+ const manual={...item,id:uid(),generated:false,overrideRuleId:item.ruleId,overrideRuleName:item.name,overrideMonth:item.date.slice(0,7),reconciled:false};
  delete manual.ruleId;
  state.manualItems.push(manual);
  return manual;
@@ -561,7 +628,89 @@ async function migrateState(){
    }
  }
 
- if(state.version!=='0.2.1'){state.version='0.2.1';changed=true}
+ // v0.2.2: robust August overrides and week-4 forecast timing.
+ const sf=(state.bills||[]).find(x=>x.name==='State Farm');
+ const g2=(state.bills||[]).find(x=>x.name==='Groceries – second half');
+ const f2=(state.bills||[]).find(x=>x.name==='Fuel – second half');
+
+ for(const x of (state.manualItems||[])){
+   if(x.name==='State Farm – August'&&sf){
+     if(x.overrideRuleId!==sf.id){x.overrideRuleId=sf.id;changed=true}
+     if(x.overrideRuleName!=='State Farm'){x.overrideRuleName='State Farm';changed=true}
+     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
+   }
+   if(x.name==='Groceries – August remaining'&&g2){
+     if(x.overrideRuleId!==g2.id){x.overrideRuleId=g2.id;changed=true}
+     if(x.overrideRuleName!=='Groceries – second half'){x.overrideRuleName='Groceries – second half';changed=true}
+     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
+   }
+   if(x.name==='Fuel – August remaining'&&f2){
+     if(x.overrideRuleId!==f2.id){x.overrideRuleId=f2.id;changed=true}
+     if(x.overrideRuleName!=='Fuel – second half'){x.overrideRuleName='Fuel – second half';changed=true}
+     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
+   }
+   if(x.name==='T Car – August'){
+     if(x.overrideRuleName!=='T Car'){x.overrideRuleName='T Car';changed=true}
+     if(x.overrideMonth!=='2026-08'){x.overrideMonth='2026-08';changed=true}
+   }
+
+   // The original spreadsheet grouped these remaining items in the week-4/pay-period bucket.
+   // Their contractual due day is kept separately for reference.
+   const week4 = {
+     'M Car – August':15,
+     'Mortgage – August':15,
+     'Natural Gas – August actual':20,
+     'Electric – August actual':20
+   };
+   if(week4[x.name]){
+     if(x.date!=='2026-08-25'){x.date='2026-08-25';changed=true}
+     if(x.dueDay!==week4[x.name]){x.dueDay=week4[x.name];changed=true}
+   }
+   if(x.name==='Taxes – August extra'&&x.dueDay!==25){x.dueDay=25;changed=true}
+   if(x.name==='Credit One – August'&&x.dueDay!==28){x.dueDay=28;changed=true}
+ }
+
+ // v0.3.0: August 25 CSS is a one-time $2,500 occurrence; normal CSS remains $2,425.
+ const cssRule=(state.incomeRules||[]).find(x=>x.name==='CSS');
+ if(cssRule){
+   let augCss=(state.manualItems||[]).find(x=>
+     x.type==='income' &&
+     (x.overrideRuleId===cssRule.id || x.overrideRuleName==='CSS') &&
+     (x.overrideMonth||x.date?.slice(0,7))==='2026-08'
+   );
+   if(!augCss){
+     state.manualItems.push({
+       id:uid(),type:'income',kind:'paycheck',name:'CSS',category:'Income',
+       amount:2500,date:'2026-08-25',status:'upcoming',
+       overrideRuleId:cssRule.id,overrideRuleName:'CSS',overrideMonth:'2026-08',
+       clearedAt:null,reconciled:false,generated:false
+     });
+     changed=true;
+   }else{
+     if(+augCss.amount!==2500){augCss.amount=2500;changed=true}
+     if(augCss.date!=='2026-08-25'){augCss.date='2026-08-25';changed=true}
+     if(augCss.status!=='upcoming'){augCss.status='upcoming';changed=true}
+     if(augCss.overrideRuleId!==cssRule.id){augCss.overrideRuleId=cssRule.id;changed=true}
+     if(augCss.overrideRuleName!=='CSS'){augCss.overrideRuleName='CSS';changed=true}
+     if(augCss.overrideMonth!=='2026-08'){augCss.overrideMonth='2026-08';changed=true}
+   }
+ }
+
+ // Match the user's August pay-period layout:
+ // only Maverick + Apple sit before the 8/25 CSS check; week-4 commitments sit on/after 8/25.
+ const aug25Names=new Set([
+   'Groceries – August remaining','Fuel – August remaining','State Farm – August','Affirm',
+   'M Car – August','Mortgage – August','Natural Gas – August actual',
+   'Electric – August actual','Taxes – August extra'
+ ]);
+ for(const x of (state.manualItems||[])){
+   if(aug25Names.has(x.name) && x.date!=='2026-08-25'){x.date='2026-08-25';changed=true}
+   if(x.name==='Maverick Football' && x.date!=='2026-08-21'){x.date='2026-08-21';changed=true}
+   if(x.name==='Apple – August actual' && x.date!=='2026-08-21'){x.date='2026-08-21';changed=true}
+   if(x.name==='Credit One – August' && x.date!=='2026-08-28'){x.date='2026-08-28';changed=true}
+ }
+
+ if(state.version!=='0.3.1'){state.version='0.3.1';changed=true}
  if(changed) await idbSet('state',state);
  return changed;
 }

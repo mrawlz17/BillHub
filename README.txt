@@ -1,4 +1,4 @@
-BILL HUB v0.2.1
+BILL HUB v0.3.1
 
 WHAT THIS PACKAGE CONTAINS
 - app/                     Generic Bill Hub application shell. No personal financial seed data is embedded here.
@@ -71,3 +71,27 @@ V0.2.1 FIXES
 - T Car is suppressed for August 2026 because it was not among the remaining obligations at the 8/21 starting checkpoint.
 - T Car continues normally in future months.
 - Existing v0.2.0 local data auto-migrates on open.
+
+V0.2.2 FIXES
+- Fixed August double-counting of State Farm, second-half Groceries, and second-half Fuel.
+- Month-specific replacements now suppress recurring rules by both rule ID and rule name, making imports/migrations more reliable.
+- August obligations now total $3,700 from the 8/21 checkpoint, producing a projected August ending balance of $690 with the known $2,425 CSS check.
+- Remaining week-4 M Car, Mortgage, Natural Gas, and Electric items forecast in the Aug 25 pay-period bucket instead of on an invented Aug 22 date.
+- Their original due day is retained and displayed as metadata.
+- Existing v0.2.1 data auto-migrates on open.
+
+V0.3.0
+- August 25 CSS occurrence is $2,500; future CSS checks remain at the recurring $2,425.
+- August known math now resolves to: $1,965 start + $2,500 income - $3,700 outflow = $765 ending.
+- August cash timing now follows the spreadsheet pay-period layout: Maverick and Apple before the 8/25 CSS check; week-4 obligations against/after that check.
+- Rolling Forecast was redesigned as a compact month-by-month table showing Start, Income, Outflow, and End.
+- Rolling Forecast and Monthly Cash Flow are now generated from the exact same month buckets to prevent mismatched totals.
+- Upcoming Cash Flow was replaced by Monthly Cash Flow. Each month has its own expandable section and summary.
+- Each cash-flow line now shows the projected running balance after that item.
+- Existing v0.2.2 data auto-migrates.
+
+V0.3.1
+- Rolling Forecast automatically detects three-paycheck months for biweekly income sources.
+- October 2026 is flagged as "3× Midcon" because Midcon lands on Oct 2, Oct 16, and Oct 30.
+- Expanded Monthly Cash Flow also displays a "3-paycheck month · Midcon" badge.
+- Detection is generic and will work for any future biweekly income source.

@@ -69,18 +69,21 @@
             <option value="12">12 months</option>
           </select>
         </div>
-        <div id="monthCards" class="month-grid"></div>
+        <div class="forecast-headings">
+          <span>Month</span><span>Start</span><span>Income</span><span>Out</span><span>End</span>
+        </div>
+        <div id="monthCards" class="forecast-list"></div>
       </article>
 
       <article class="panel">
         <div class="panel-head">
           <div>
-            <h2>Upcoming cash flow</h2>
-            <p class="muted">Tap an item to edit this month, change status, or manage the recurring bill.</p>
+            <h2>Monthly cash flow</h2>
+            <p class="muted">Each month is separate. Open a month to see its income, bills, pools, and running balance.</p>
           </div>
           <button id="addExtraBtn" class="secondary">+ Extra</button>
         </div>
-        <div id="timeline" class="timeline"></div>
+        <div id="timeline" class="monthly-flow"></div>
       </article>
     </section>
 
