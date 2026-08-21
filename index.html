@@ -76,7 +76,7 @@
         <div class="panel-head">
           <div>
             <h2>Upcoming cash flow</h2>
-            <p class="muted">Tap an item to change its status.</p>
+            <p class="muted">Tap an item to edit this month, change status, or manage the recurring bill.</p>
           </div>
           <button id="addExtraBtn" class="secondary">+ Extra</button>
         </div>
@@ -148,6 +148,32 @@
     <button data-view="settingsView">Settings</button>
   </nav>
 
+  <dialog id="itemDialog">
+    <form id="itemForm">
+      <h3 id="itemDialogTitle">Edit cash-flow item</h3>
+      <div id="itemRuleNote" class="notice"></div>
+      <label id="itemAmountLabel">Amount
+        <input id="itemAmount" type="number" step="0.01" min="0" required inputmode="decimal" />
+      </label>
+      <label>Date
+        <input id="itemDate" type="date" required />
+      </label>
+      <label>Category
+        <select id="itemCategory"></select>
+      </label>
+      <label>Status
+        <select id="itemStatus"></select>
+      </label>
+      <div class="item-actions">
+        <button id="saveThisMonthBtn" type="submit">Save this month</button>
+        <button id="editRecurringFromItemBtn" type="button" class="secondary">Edit recurring bill</button>
+        <button id="addCatchupBtn" type="button" class="secondary">Add extra / catch-up</button>
+        <button id="skipMonthBtn" type="button" class="secondary danger-outline">Skip this month</button>
+        <button id="closeItemBtn" type="button" class="secondary">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="balanceDialog">
     <form method="dialog" id="balanceForm">
       <h3>Update account balance</h3>
@@ -165,7 +191,7 @@
 
   <dialog id="extraDialog">
     <form method="dialog" id="extraForm">
-      <h3>Add one-time extra</h3>
+      <h3 id="extraDialogTitle">Add one-time extra</h3>
       <label>Name <input id="extraName" required /></label>
       <label>Amount <input id="extraAmount" type="number" step="0.01" required inputmode="decimal" /></label>
       <label>Date <input id="extraDate" type="date" required /></label>
@@ -215,7 +241,7 @@
 
   <dialog id="incomeDialog">
     <form method="dialog" id="incomeForm">
-      <h3>Add income source</h3>
+      <h3 id="incomeDialogTitle">Add income source</h3>
       <label>Name <input id="incomeName" required /></label>
       <label>Amount <input id="incomeAmount" type="number" step="0.01" required /></label>
       <label>Schedule

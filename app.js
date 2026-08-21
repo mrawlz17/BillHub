@@ -1,10 +1,15 @@
 
 const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
+let activeItem=null, editingRuleId=null, editingIncomeId=null, extraRelatedRuleId=null;
 
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0));
-const dstr=d=>new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+const localDate=d=>{
+  if(typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Date(d+'T12:00:00');
+  return new Date(d);
+};
+const dstr=d=>localDate(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 const isoDate=d=>{
   const x=new Date(d); x.setHours(12,0,0,0);
   return x.toISOString().slice(0,10);
@@ -128,8 +133,9 @@ function projectedItems(months=6){
  let gen=[...genBillOccurrences(start,end),...genIncomeOccurrences(start,end)];
  const manuals=(state.manualItems||[]).filter(x=>new Date(x.date+'T12:00:00')>=start&&new Date(x.date+'T12:00:00')<=end);
  // manual overrides can suppress matching generated occurrence by overrideRuleId/date
- const suppress=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
- gen=gen.filter(x=>!suppress.has(`${x.ruleId}|${x.date}`));
+ const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
+ const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
+ gen=gen.filter(x=>!suppressExact.has(`${x.ruleId}|${x.date}`)&&!suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`));
  const items=[...gen,...manuals].sort((a,b)=>a.date.localeCompare(b.date)||(a.type==='income'?-1:1));
  return items;
 }
@@ -138,7 +144,7 @@ function projection(months=6){
  let bal=+state.balance.amount||0, low=bal, lowDate=state.balance.updatedAt||new Date().toISOString();
  const rows=[];
  for(const x of items){
-   if(x.status==='cleared'||x.status==='received') continue; // already reflected in actual checkpoint
+   if(x.status==='cleared'||x.status==='received'||x.status==='skipped') continue; // cleared/received already reflected; skipped has no cash effect
    bal += x.type==='income'?+x.amount:-Math.abs(+x.amount);
    rows.push({...x,projectedBalance:bal});
    if(bal<low){low=bal;lowDate=x.date}
@@ -158,7 +164,7 @@ function monthSummary(months){
    for(const x of p.items){
      const dt=new Date(x.date+'T12:00:00');
      if(dt<mStart||dt>mEnd)continue;
-     if(x.status==='cleared'||x.status==='received')continue;
+     if(x.status==='cleared'||x.status==='received'||x.status==='skipped')continue;
      if(x.type==='income'){income+=+x.amount;working+=+x.amount}
      else {expenses+=Math.abs(+x.amount);working-=Math.abs(+x.amount)}
    }
@@ -180,7 +186,7 @@ function renderDashboard(){
  lastProjection=p.rows;
  const pending=state.manualItems.filter(x=>x.type==='expense'&&x.status==='pending').reduce((s,x)=>s+Math.abs(+x.amount),0);
  $('pendingOutflows').textContent=money(pending);
- const ni=p.items.find(x=>x.type==='income'&&x.status!=='received');
+ const ni=p.items.find(x=>x.type==='income'&&x.status!=='received'&&x.status!=='skipped');
  $('nextIncome').textContent=ni?money(ni.amount):'$0.00';
  $('nextIncomeDate').textContent=ni?`${ni.name} · ${dstr(ni.date+'T12:00:00')}`:'—';
  $('lowestBalance').textContent=money(p.low);
@@ -193,31 +199,39 @@ function renderDashboard(){
     <div class="month-row"><span>Starting</span><span>${money(m.opening)}</span></div>
     <div class="month-row"><span>Income</span><span class="positive">+${money(m.income)}</span></div>
     <div class="month-row"><span>Obligations</span><span>-${money(m.expenses)}</span></div>
-    ${m.reserve?`<div class="month-row"><span>Reserved</span><span>-${money(m.reserve)}</span></div>`:''}
-    <div class="month-row end"><span>Projected end</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>
+    <div class="month-row"><span>Projected bank end</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>
+    ${m.reserve?`<div class="month-row"><span>Reserved</span><span>-${money(m.reserve)}</span></div>
+    <div class="month-row end"><span>Safe after reserve</span><span class="${(m.ending-m.reserve)<0?'negative':''}">${money(m.ending-m.reserve)}</span></div>`:
+    `<div class="month-row end"><span>Available</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>`}
    </div>`).join('');
- const visible=p.items.filter(x=>x.status!=='cleared'&&x.status!=='received').slice(0,30);
+ const visible=p.items.filter(x=>x.status!=='cleared'&&x.status!=='received'&&x.status!=='skipped').slice(0,40);
  $('timeline').innerHTML=visible.length?visible.map(x=>`
    <div class="timeline-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}" data-generated="${x.generated?'1':'0'}">
     <div class="date">${dstr(x.date+'T12:00:00')}</div>
     <div><strong>${x.name}</strong>${statusBadge(x)}<div class="muted small">${x.category||''}${x.kind==='pool'?' · spending pool':''}</div></div>
     <div class="amt">${x.type==='income'?'+':'-'}${money(x.amount)}</div>
    </div>`).join(''):'<p class="muted">No upcoming items.</p>';
- document.querySelectorAll('.timeline-item').forEach(el=>el.addEventListener('click',()=>cycleItemStatus(el.dataset.id,el.dataset.generated==='1')));
+ document.querySelectorAll('.timeline-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
 }
 function renderPlan(){
- $('billsList').innerHTML=state.bills.length?state.bills.map(b=>`
-  <div class="list-row">
+ const sortedBills=[...state.bills].sort((a,b)=>{
+   const rank=x=>x.schedule==='monthly_day'?(x.day||99):x.schedule==='second_monday'?8:50;
+   return rank(a)-rank(b)||a.name.localeCompare(b.name);
+ });
+ $('billsList').innerHTML=sortedBills.length?sortedBills.map(b=>`
+  <div class="list-row" data-rule-id="${b.id}">
    <div>${b.schedule==='monthly_day'?`${b.day}${ordinal(b.day)}`:b.schedule==='biweekly'?'2 weeks':'2nd Mon'}</div>
    <div><strong>${b.name}</strong><div class="muted small">${b.category} · ${b.kind==='pool'?'Spending pool':'Recurring bill'}</div></div>
    <div class="amt">${money(b.amount)}</div>
   </div>`).join(''):'<p class="muted">No recurring bills yet.</p>';
  $('incomeList').innerHTML=state.incomeRules.length?state.incomeRules.map(r=>`
-  <div class="list-row">
+  <div class="list-row" data-income-id="${r.id}">
    <div>${r.schedule==='twice_monthly'?'10 / 25':r.schedule==='biweekly'?'2 weeks':'2nd Mon'}</div>
    <div><strong>${r.name}</strong><div class="muted small">${r.schedule.replaceAll('_',' ')}</div></div>
    <div class="amt">${money(r.amount)}</div>
   </div>`).join(''):'<p class="muted">No income sources yet.</p>';
+ document.querySelectorAll('[data-rule-id]').forEach(el=>el.addEventListener('click',()=>openRuleDialog(el.dataset.ruleId)));
+ document.querySelectorAll('[data-income-id]').forEach(el=>el.addEventListener('click',()=>openIncomeDialog(el.dataset.incomeId)));
 }
 function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return (s[(v-20)%10]||s[v]||s[0])}
 function renderReports(){
@@ -245,28 +259,110 @@ function renderAll(){
 }
 function fillCategorySelects(){
  const opts=state.categories.map(c=>`<option>${c}</option>`).join('');
- ['extraCategory','ruleCategory'].forEach(id=>$(id).innerHTML=opts);
+ ['extraCategory','ruleCategory','itemCategory'].forEach(id=>$(id).innerHTML=opts);
 }
 let currentView='dashboardView';
 document.querySelectorAll('.bottomnav button').forEach(b=>b.addEventListener('click',()=>{
  currentView=b.dataset.view;document.querySelectorAll('.bottomnav button').forEach(x=>x.classList.toggle('active',x===b));renderAll();
 }));
 
-async function cycleItemStatus(id,isGenerated){
- const item=projectedItems(12).find(x=>x.id===id); if(!item)return;
- if(isGenerated){
-   const status=item.type==='income'?'received':(item.status==='upcoming'?'pending':'cleared');
-   state.manualItems.push({...item,id:uid(),generated:false,overrideRuleId:item.ruleId,status,
-      clearedAt:(status==='cleared'||status==='received')?new Date().toISOString():null,reconciled:false});
- }else{
-   const m=state.manualItems.find(x=>x.id===id); if(!m)return;
-   if(m.type==='income'){m.status=m.status==='upcoming'?'received':'upcoming'}
-   else m.status=m.status==='upcoming'?'pending':m.status==='pending'?'cleared':'upcoming';
-   m.clearedAt=(m.status==='cleared'||m.status==='received')?new Date().toISOString():null;
-   m.reconciled=false;
- }
- await save();
+function itemMonth(x){return (x.overrideMonth||x.date||'').slice(0,7)}
+function recurringRuleForItem(item){
+ if(!item) return null;
+ const id=item.ruleId||item.overrideRuleId||item.relatedRuleId;
+ if(!id) return null;
+ return item.type==='income' ? state.incomeRules.find(x=>x.id===id) : state.bills.find(x=>x.id===id);
 }
+function findProjectedItem(id){return projectedItems(12).find(x=>x.id===id)||state.manualItems.find(x=>x.id===id)}
+function findMonthOverride(item){
+ const rid=item.ruleId||item.overrideRuleId;
+ if(!rid) return null;
+ const month=item.overrideMonth||item.date.slice(0,7);
+ return state.manualItems.find(x=>x.overrideRuleId===rid&&(x.overrideMonth||x.date.slice(0,7))===month)||null;
+}
+function materializeOccurrence(item){
+ if(!item.generated){
+   if(item.overrideRuleId&&!item.overrideMonth)item.overrideMonth=item.date.slice(0,7);
+   return item;
+ }
+ const existing=findMonthOverride(item);
+ if(existing)return existing;
+ const manual={...item,id:uid(),generated:false,overrideRuleId:item.ruleId,overrideMonth:item.date.slice(0,7),reconciled:false};
+ delete manual.ruleId;
+ state.manualItems.push(manual);
+ return manual;
+}
+function setItemStatusOptions(item){
+ if(item.type==='income'){
+   $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="received">Received</option>';
+ }else{
+   $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="pending">Pending / submitted</option><option value="cleared">Cleared</option>';
+ }
+}
+function openItemDialog(id){
+ const item=findProjectedItem(id);if(!item)return;
+ activeItem=item;
+ const rule=recurringRuleForItem(item);
+ $('itemDialogTitle').textContent=item.name;
+ $('itemAmount').value=(+item.amount||0).toFixed(2);
+ $('itemDate').value=item.date;
+ $('itemCategory').value=item.category||'Other';
+ setItemStatusOptions(item);
+ $('itemStatus').value=item.status==='skipped'?'upcoming':(item.status||'upcoming');
+ const isPool=item.kind==='pool';
+ $('itemAmountLabel').childNodes[0].nodeValue=isPool?'Remaining this period ':'Amount ';
+ $('itemRuleNote').innerHTML=rule
+   ? `Recurring default: <strong>${money(rule.amount)}</strong>. Saving here changes <strong>this occurrence only</strong>; future months keep the recurring default.`
+   : 'This is a one-time item. Changes apply only to this entry.';
+ const directRecurringId=item.ruleId||item.overrideRuleId;
+ $('editRecurringFromItemBtn').classList.toggle('hidden',!directRecurringId);
+ $('addCatchupBtn').classList.toggle('hidden',item.type==='income');
+ $('skipMonthBtn').classList.toggle('hidden',!directRecurringId);
+ $('itemDialog').showModal();
+}
+$('closeItemBtn').addEventListener('click',()=>{$('itemDialog').close();activeItem=null});
+$('itemForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(!activeItem)return;
+ await makeSnapshot('before month edit');
+ const m=materializeOccurrence(activeItem);
+ m.amount=Math.abs(+$('itemAmount').value||0);
+ m.date=$('itemDate').value;
+ m.category=$('itemCategory').value;
+ m.status=$('itemStatus').value;
+ m.clearedAt=(m.status==='cleared'||m.status==='received')?new Date().toISOString():null;
+ m.reconciled=false;
+ await save();$('itemDialog').close();activeItem=null;
+});
+$('skipMonthBtn').addEventListener('click',async()=>{
+ if(!activeItem)return;
+ const rule=recurringRuleForItem(activeItem);
+ if(!rule)return;
+ if(!confirm(`Skip ${activeItem.name} for this occurrence only? Future recurring months will remain unchanged.`))return;
+ await makeSnapshot('before skip month');
+ const m=materializeOccurrence(activeItem);
+ m.originalAmount=m.originalAmount||m.amount;
+ m.amount=0;m.status='skipped';m.clearedAt=null;m.reconciled=true;
+ await save();$('itemDialog').close();activeItem=null;
+});
+$('editRecurringFromItemBtn').addEventListener('click',()=>{
+ if(!activeItem)return;
+ const id=activeItem.ruleId||activeItem.overrideRuleId;
+ const type=activeItem.type;
+ $('itemDialog').close();
+ if(type==='income')openIncomeDialog(id);else openRuleDialog(id);
+});
+$('addCatchupBtn').addEventListener('click',()=>{
+ if(!activeItem)return;
+ const rid=activeItem.ruleId||activeItem.overrideRuleId||null;
+ extraRelatedRuleId=rid;
+ $('extraDialogTitle').textContent='Add extra / catch-up payment';
+ $('extraName').value=`${activeItem.name} – Catch-up`;
+ $('extraAmount').value='';
+ $('extraDate').value=activeItem.date||todayISO();
+ $('extraCategory').value=activeItem.category||'Other';
+ $('extraStatus').value='upcoming';
+ $('itemDialog').close();$('extraDialog').showModal();
+});
 
 $('forecastMonths').addEventListener('change',()=>{state.preferences.forecastMonths=+$('forecastMonths').value;save()});
 $('updateBalanceBtn').addEventListener('click',()=>{
@@ -304,17 +400,26 @@ $('balanceForm').addEventListener('submit',async e=>{
  await save();$('balanceDialog').close();
 });
 
-$('addExtraBtn').addEventListener('click',()=>{$('extraDate').value=todayISO();$('extraDialog').showModal()});
+$('addExtraBtn').addEventListener('click',()=>{extraRelatedRuleId=null;$('extraDialogTitle').textContent='Add one-time extra';$('extraForm').reset();$('extraDate').value=todayISO();$('extraDialog').showModal()});
 $('extraForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const status=$('extraStatus').value;
- state.manualItems.push({id:uid(),type:'expense',kind:'extra',name:$('extraName').value.trim(),amount:+$('extraAmount').value,date:$('extraDate').value,category:$('extraCategory').value,status,clearedAt:status==='cleared'?new Date().toISOString():null,reconciled:false,generated:false});
- await save();$('extraDialog').close();e.target.reset();
+ state.manualItems.push({id:uid(),type:'expense',kind:extraRelatedRuleId?'catchup':'extra',name:$('extraName').value.trim(),amount:+$('extraAmount').value,date:$('extraDate').value,category:$('extraCategory').value,status,relatedRuleId:extraRelatedRuleId||null,clearedAt:status==='cleared'?new Date().toISOString():null,reconciled:false,generated:false});
+ await save();$('extraDialog').close();e.target.reset();extraRelatedRuleId=null;
 });
 
-$('addBillBtn').addEventListener('click',()=>{openRuleDialog()});
-function openRuleDialog(){
- $('ruleDialogTitle').textContent='Add recurring item';$('ruleSchedule').value='monthly_day';toggleRuleFields();$('ruleDialog').showModal();
+$('addBillBtn').addEventListener('click',()=>openRuleDialog(null));
+function openRuleDialog(id=null){
+ editingRuleId=id;
+ $('ruleForm').reset();
+ const r=id?state.bills.find(x=>x.id===id):null;
+ $('ruleDialogTitle').textContent=r?'Edit recurring bill':'Add recurring item';
+ if(r){
+   $('ruleName').value=r.name;$('ruleAmount').value=r.amount;$('ruleCategory').value=r.category||'Other';
+   $('ruleKind').value=r.kind||'bill';$('ruleSchedule').value=r.schedule||'monthly_day';
+   $('ruleDay').value=r.day||'';$('ruleAnchor').value=r.anchor||'';
+ }else{$('ruleSchedule').value='monthly_day';}
+ toggleRuleFields();$('ruleDialog').showModal();
 }
 $('ruleSchedule').addEventListener('change',toggleRuleFields);
 function toggleRuleFields(){
@@ -323,16 +428,28 @@ function toggleRuleFields(){
  $('anchorField').classList.toggle('hidden',s!=='biweekly');
 }
 $('ruleForm').addEventListener('submit',async e=>{
- e.preventDefault();
- state.bills.push({id:uid(),name:$('ruleName').value.trim(),amount:+$('ruleAmount').value,category:$('ruleCategory').value,kind:$('ruleKind').value,schedule:$('ruleSchedule').value,day:+$('ruleDay').value||null,anchor:$('ruleAnchor').value||null,active:true});
- await save();$('ruleDialog').close();e.target.reset();
+ e.preventDefault();await makeSnapshot(editingRuleId?'before recurring bill edit':'before recurring bill add');
+ const values={name:$('ruleName').value.trim(),amount:+$('ruleAmount').value,category:$('ruleCategory').value,kind:$('ruleKind').value,schedule:$('ruleSchedule').value,day:+$('ruleDay').value||null,anchor:$('ruleAnchor').value||null,active:true};
+ if(editingRuleId){const r=state.bills.find(x=>x.id===editingRuleId);if(r)Object.assign(r,values)}
+ else state.bills.push({id:uid(),...values});
+ await save();$('ruleDialog').close();e.target.reset();editingRuleId=null;
 });
-$('addIncomeBtn').addEventListener('click',()=>{$('incomeDialog').showModal()});
+$('addIncomeBtn').addEventListener('click',()=>openIncomeDialog(null));
+function openIncomeDialog(id=null){
+ editingIncomeId=id;$('incomeForm').reset();
+ const r=id?state.incomeRules.find(x=>x.id===id):null;
+ $('incomeDialogTitle').textContent=r?'Edit recurring income':'Add income source';
+ if(r){$('incomeName').value=r.name;$('incomeAmount').value=r.amount;$('incomeSchedule').value=r.schedule;$('incomeAnchor').value=r.anchor||''}
+ $('incomeAnchorField').classList.toggle('hidden',$('incomeSchedule').value!=='biweekly');
+ $('incomeDialog').showModal();
+}
 $('incomeSchedule').addEventListener('change',()=>{$('incomeAnchorField').classList.toggle('hidden',$('incomeSchedule').value!=='biweekly')});
 $('incomeForm').addEventListener('submit',async e=>{
- e.preventDefault();
- state.incomeRules.push({id:uid(),name:$('incomeName').value.trim(),amount:+$('incomeAmount').value,schedule:$('incomeSchedule').value,anchor:$('incomeAnchor').value||null,active:true});
- await save();$('incomeDialog').close();e.target.reset();
+ e.preventDefault();await makeSnapshot(editingIncomeId?'before recurring income edit':'before recurring income add');
+ const values={name:$('incomeName').value.trim(),amount:+$('incomeAmount').value,schedule:$('incomeSchedule').value,anchor:$('incomeAnchor').value||null,active:true};
+ if(editingIncomeId){const r=state.incomeRules.find(x=>x.id===editingIncomeId);if(r)Object.assign(r,values)}
+ else state.incomeRules.push({id:uid(),...values});
+ await save();$('incomeDialog').close();e.target.reset();editingIncomeId=null;
 });
 
 $('seedImport').addEventListener('change',async e=>{
@@ -384,9 +501,64 @@ $('resetBtn').addEventListener('click',async()=>{
  await makeSnapshot('before reset');await idbDel('state');state=null;renderAll();
 });
 
+
+async function migrateState(){
+ if(!state) return false;
+ let changed=false;
+ // v0.1.2: the initial 8/21 balance explicitly included the Midcon 8/21 paycheck.
+ const note=(state.balanceHistory||[]).map(x=>x.note||'').join(' ').toLowerCase();
+ const midcon=(state.incomeRules||[]).find(x=>x.name.toLowerCase()==='midcon');
+ const hasOverride=(state.manualItems||[]).some(x=>x.type==='income'&&x.overrideRuleId===midcon?.id&&x.date==='2026-08-21');
+ if(midcon&&note.includes('includes 8/21 midcon')&&!hasOverride){
+   state.manualItems.push({
+     id:uid(),type:'income',kind:'paycheck',name:'Midcon',category:'Income',
+     amount:+midcon.amount,date:'2026-08-21',status:'received',
+     overrideRuleId:midcon.id,clearedAt:state.balance.updatedAt||new Date().toISOString(),
+     reconciled:true,generated:false
+   });
+   changed=true;
+ }
+ // v0.1.3: August Groceries/Fuel values are remaining pool balances, not submitted payments.
+ for(const x of (state.manualItems||[])){
+   if(x.name==='Groceries – August pending' || x.name==='Groceries – August remaining'){
+     x.name='Groceries – August remaining';
+     x.status='upcoming';
+     x.kind='pool';
+     x.category='Food';
+     x.clearedAt=null;
+     x.reconciled=false;
+     changed=true;
+   }
+   if(x.name==='Fuel – August pending' || x.name==='Fuel – August remaining'){
+     x.name='Fuel – August remaining';
+     x.status='upcoming';
+     x.kind='pool';
+     x.category='Fuel';
+     x.clearedAt=null;
+     x.reconciled=false;
+     changed=true;
+   }
+ }
+ // v0.2.0: August pool balances replace, rather than add to, the normal second-half allocations.
+ const grocery2=(state.bills||[]).find(x=>x.name==='Groceries – second half');
+ const fuel2=(state.bills||[]).find(x=>x.name==='Fuel – second half');
+ for(const x of (state.manualItems||[])){
+   if(x.name==='Groceries – August remaining'&&grocery2&&x.overrideRuleId!==grocery2.id){x.overrideRuleId=grocery2.id;x.overrideMonth='2026-08';changed=true}
+   if(x.name==='Fuel – August remaining'&&fuel2&&x.overrideRuleId!==fuel2.id){x.overrideRuleId=fuel2.id;x.overrideMonth='2026-08';changed=true}
+   if(x.overrideRuleId&&!x.overrideMonth){x.overrideMonth=(x.date||'').slice(0,7);changed=true}
+ }
+ if(state.version!=='0.2.0'){state.version='0.2.0';changed=true}
+ if(changed) await idbSet('state',state);
+ return changed;
+}
+
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 (async()=>{
  await openDB();state=await idbGet('state')||null;
- if(state){await makeSnapshot('app open');$('forecastMonths').value=String(state.preferences?.forecastMonths||6)}
+ if(state){
+   await makeSnapshot('app open');
+   await migrateState();
+   $('forecastMonths').value=String(state.preferences?.forecastMonths||6);
+ }
  renderAll();
 })();
