@@ -1,4 +1,4 @@
-BILL HUB v0.2.0
+BILL HUB v0.2.1
 
 WHAT THIS PACKAGE CONTAINS
 - app/                     Generic Bill Hub application shell. No personal financial seed data is embedded here.
@@ -63,3 +63,11 @@ V0.2.0 MONTH-SPECIFIC EDITING
 - Existing v0.1.3 IndexedDB data migrates to v0.2.0 automatically.
 
 - August remaining Groceries $250 and Fuel $240 now replace the normal second-half $400/$300 pool commitments instead of being added on top.
+
+V0.2.1 FIXES
+- Removed the reserve/carryover feature entirely.
+- Each month's projected ending bank balance automatically becomes the next month's starting balance.
+- The old $700 September reserve is removed from both new seed data and existing browser data.
+- T Car is suppressed for August 2026 because it was not among the remaining obligations at the 8/21 starting checkpoint.
+- T Car continues normally in future months.
+- Existing v0.2.0 local data auto-migrates on open.

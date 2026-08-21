@@ -168,8 +168,7 @@ function monthSummary(months){
      if(x.type==='income'){income+=+x.amount;working+=+x.amount}
      else {expenses+=Math.abs(+x.amount);working-=Math.abs(+x.amount)}
    }
-   const reserve=(state.reserves||[]).filter(r=>r.month===`${mStart.getFullYear()}-${String(mStart.getMonth()+1).padStart(2,'0')}`).reduce((s,r)=>s+(+r.amount||0),0);
-   result.push({month:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),opening,income,expenses,reserve,ending:working});
+   result.push({month:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),opening,income,expenses,ending:working});
  }
  return result;
 }
@@ -199,10 +198,7 @@ function renderDashboard(){
     <div class="month-row"><span>Starting</span><span>${money(m.opening)}</span></div>
     <div class="month-row"><span>Income</span><span class="positive">+${money(m.income)}</span></div>
     <div class="month-row"><span>Obligations</span><span>-${money(m.expenses)}</span></div>
-    <div class="month-row"><span>Projected bank end</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>
-    ${m.reserve?`<div class="month-row"><span>Reserved</span><span>-${money(m.reserve)}</span></div>
-    <div class="month-row end"><span>Safe after reserve</span><span class="${(m.ending-m.reserve)<0?'negative':''}">${money(m.ending-m.reserve)}</span></div>`:
-    `<div class="month-row end"><span>Available</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>`}
+    <div class="month-row end"><span>Projected end</span><span class="${m.ending<0?'negative':''}">${money(m.ending)}</span></div>
    </div>`).join('');
  const visible=p.items.filter(x=>x.status!=='cleared'&&x.status!=='received'&&x.status!=='skipped').slice(0,40);
  $('timeline').innerHTML=visible.length?visible.map(x=>`
@@ -547,7 +543,25 @@ async function migrateState(){
    if(x.name==='Fuel – August remaining'&&fuel2&&x.overrideRuleId!==fuel2.id){x.overrideRuleId=fuel2.id;x.overrideMonth='2026-08';changed=true}
    if(x.overrideRuleId&&!x.overrideMonth){x.overrideMonth=(x.date||'').slice(0,7);changed=true}
  }
- if(state.version!=='0.2.0'){state.version='0.2.0';changed=true}
+ // v0.2.1: month ending balance simply rolls into the next month; no reserve/carryover object.
+ if((state.reserves||[]).length){state.reserves=[];changed=true}
+
+ // T Car was not an August remaining obligation at the 8/21 checkpoint.
+ const tcar=(state.bills||[]).find(x=>x.name==='T Car');
+ if(tcar){
+   const hasAugTCarOverride=(state.manualItems||[]).some(x=>x.overrideRuleId===tcar.id&&(x.overrideMonth||x.date?.slice(0,7))==='2026-08');
+   if(!hasAugTCarOverride){
+     state.manualItems.push({
+       id:uid(),type:'expense',kind:'bill',name:'T Car – August',
+       category:tcar.category||'Vehicles',amount:0,date:'2026-08-25',
+       status:'skipped',overrideRuleId:tcar.id,overrideMonth:'2026-08',
+       clearedAt:null,reconciled:true,generated:false
+     });
+     changed=true;
+   }
+ }
+
+ if(state.version!=='0.2.1'){state.version='0.2.1';changed=true}
  if(changed) await idbSet('state',state);
  return changed;
 }
