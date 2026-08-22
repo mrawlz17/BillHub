@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=0.5.0" />
+  <link rel="stylesheet" href="styles.css?v=0.6.0" />
 </head>
 <body>
   <header class="topbar">
@@ -59,6 +59,7 @@
           <div class="label">LOWEST BALANCE</div>
           <div id="lowestBalance" class="metric">$0.00</div>
           <div id="lowestBalanceDate" class="muted small">—</div>
+          <div id="lowestBalanceFloor" class="muted small floor-status">—</div>
         </article>
       </div>
 
@@ -74,25 +75,74 @@
     </section>
 
     <section id="planView" class="hidden">
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Bills</h2>
-          </div>
-          <button id="addBillBtn" class="secondary">+ Add</button>
-        </div>
-        <div id="billsList"></div>
-      </article>
+      <div class="plan-tabs" role="tablist" aria-label="Plan sections">
+        <button type="button" class="plan-tab active" data-plan-pane="goalsPane" role="tab" aria-selected="true">Goals</button>
+        <button type="button" class="plan-tab" data-plan-pane="whatIfPane" role="tab" aria-selected="false">What If</button>
+        <button type="button" class="plan-tab" data-plan-pane="rulesPane" role="tab" aria-selected="false">Bills & Income</button>
+      </div>
 
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Income</h2>
+      <div id="goalsPane" class="plan-pane">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Savings Goals</h2>
+              <p class="muted small">Plan savings without changing your real forecast.</p>
+            </div>
+            <button id="addGoalBtn" class="secondary">+ Goal</button>
           </div>
-          <button id="addIncomeBtn" class="secondary">+ Add</button>
-        </div>
-        <div id="incomeList"></div>
-      </article>
+          <div id="goalFloorNote" class="planning-floor-note"></div>
+          <div id="goalsList" class="goals-list"></div>
+        </article>
+      </div>
+
+      <div id="whatIfPane" class="plan-pane hidden">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>What If</h2>
+              <p class="muted small">Test a purchase against the live six-month forecast. Nothing is saved unless you add it to the plan.</p>
+            </div>
+          </div>
+          <form id="whatIfForm" class="whatif-form">
+            <label>Purchase
+              <input id="whatIfName" value="Purchase" maxlength="60" required />
+            </label>
+            <label>Amount
+              <input id="whatIfAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required />
+            </label>
+            <label>Date
+              <input id="whatIfDate" type="date" required />
+            </label>
+            <label>Category
+              <select id="whatIfCategory"></select>
+            </label>
+            <button type="submit">Run Scenario</button>
+          </form>
+          <div id="whatIfResult" class="whatif-result hidden"></div>
+        </article>
+      </div>
+
+      <div id="rulesPane" class="plan-pane hidden">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Bills</h2>
+            </div>
+            <button id="addBillBtn" class="secondary">+ Add</button>
+          </div>
+          <div id="billsList"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Income</h2>
+            </div>
+            <button id="addIncomeBtn" class="secondary">+ Add</button>
+          </div>
+          <div id="incomeList"></div>
+        </article>
+      </div>
     </section>
 
     <section id="reportsView" class="hidden">
@@ -129,11 +179,23 @@
       </article>
 
       <article class="panel">
+        <h2>Planning</h2>
+        <p class="muted small">FlowMap uses this as a warning floor for savings goals and What If scenarios. It never blocks an intentional plan.</p>
+        <div class="minimum-balance-setting">
+          <label>Minimum Balance
+            <input id="minimumBalanceInput" type="number" min="0" step="50" inputmode="decimal" />
+          </label>
+          <button id="saveMinimumBalanceBtn" type="button" class="secondary">Save Minimum</button>
+        </div>
+        <div id="minimumBalanceStatus" class="muted small"></div>
+      </article>
+
+      <article class="panel">
         <h2>App Update</h2>
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.5.0</strong>
+            <strong id="appVersion">v0.6.0</strong>
           </div>
           <div class="update-status-wrap">
             <span id="updateStatus" class="update-pill">Checking…</span>
@@ -294,6 +356,53 @@
     </form>
   </dialog>
 
+  <dialog id="goalDialog">
+    <form id="goalForm">
+      <h3 id="goalDialogTitle" tabindex="-1">Add savings goal</h3>
+      <p class="muted small">Goals are planning tools. Creating or editing one does not change your bank balance or forecast.</p>
+      <label>Goal name
+        <input id="goalName" maxlength="60" required placeholder="Summer trip" />
+      </label>
+      <label>Target amount
+        <input id="goalTargetAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required />
+      </label>
+      <label>Target date
+        <input id="goalTargetDate" type="date" required />
+      </label>
+      <label>Already saved
+        <input id="goalSavedAmount" type="number" min="0" step="0.01" inputmode="decimal" value="0" />
+      </label>
+      <div class="dialog-actions goal-dialog-actions">
+        <button id="deleteGoalBtn" type="button" class="danger hidden">Delete</button>
+        <button id="cancelGoalBtn" type="button" class="secondary">Cancel</button>
+        <button type="submit">Save Goal</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="goalTransferDialog">
+    <form id="goalTransferForm">
+      <h3 id="goalTransferDialogTitle" tabindex="-1">Schedule savings transfer</h3>
+      <div id="goalTransferContext" class="notice"></div>
+      <label>Amount
+        <input id="goalTransferAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required />
+      </label>
+      <label>Date
+        <input id="goalTransferDate" type="date" required />
+      </label>
+      <label>Status
+        <select id="goalTransferStatus">
+          <option value="upcoming">Upcoming</option>
+          <option value="pending">Pending / submitted</option>
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button id="cancelGoalTransferBtn" type="button" class="secondary">Cancel</button>
+        <button type="submit">Add to Forecast</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="restorePreviewDialog">
     <div class="dialog-shell">
       <h3 id="restorePreviewTitle" tabindex="-1">Restore backup?</h3>
@@ -309,7 +418,7 @@
     <div class="dialog-shell">
       <h3 id="resetDialogTitle" tabindex="-1">Delete all local FlowMap data?</h3>
       <div class="danger-notice">
-        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, and local activity stored in this browser. Your backup files are not affected.
+        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, savings goals, planning settings, and local activity stored in this browser. Your backup files are not affected.
       </div>
       <button id="backupBeforeResetBtn" type="button" class="secondary full-btn">Back up first</button>
       <label class="confirm-label">Type <strong>DELETE</strong> to enable the final reset
@@ -322,6 +431,6 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=0.5.0"></script>
+  <script src="app.js?v=0.6.0"></script>
 </body>
 </html>
