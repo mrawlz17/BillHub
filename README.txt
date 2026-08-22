@@ -1,86 +1,104 @@
-BILL HUB v0.4.0
+FlowMap v0.5.0
+================
 
-PURPOSE
-Bill Hub is a private/local cash-flow planner. The actual bank balance is the source-of-truth checkpoint; future bills and income are projected from that checkpoint.
+FlowMap is a private, local-first cash-flow planning web app. It uses the actual cleared bank balance as the current checkpoint, then projects known income, bills, spending pools, extras, and catch-up payments forward for six months.
 
-UPDATE / INSTALL
-- The app/ folder is the generic deployable shell and contains no personal financial values.
-- Replacing the hosted app/ files does NOT erase the browser's IndexedDB financial data.
-- If you are updating an existing Bill Hub install, deploy the new app/ files and open the app. Existing local data migrates in place.
-- Keep an encrypted .bhub backup before major changes or moving to another device/browser.
+IMPORTANT UPDATE RULE
+---------------------
+Do not reset or re-import your financial data when deploying this update.
+Replace the hosted app files only. FlowMap intentionally keeps the existing IndexedDB database name (billhub-db) so data from Bill Hub v0.4.0 and earlier remains in place.
 
-V0.4.0 — DAILY-USE / SAFETY UPDATE
-1. One-time/manual entries can now be truly deleted.
-   - Catch-up payments, extras, reconciliation entries, and other one-time manual items can be removed.
-   - Recurring occurrences still use Skip This Month rather than deleting the recurring rule.
-   - Delete actions are undoable during the current app session.
+The v0.5 update path does not rewrite financial records on app load. Before Update & Reload or Force Refresh, FlowMap stores one temporary update guard containing the current local state. On the next load it compares the financial data. If anything changed unexpectedly, FlowMap restores the pre-update state automatically. The guard is deleted after the verification and is not a user-facing automatic backup system.
 
-2. Rolling forecast is fixed to six months.
-   - Current month + next five months only.
-   - Removed 3/6/12 month selector.
+WHAT CHANGED IN v0.5.0
+----------------------
+1. True delete for one-time/manual entries
+   - Catch-up payments, extras, reconciliation entries, and other one-time manual entries can be deleted.
+   - Recurring items still use Skip This Month.
+   - Recent changes can be undone during the current session.
 
-3. Dashboard layout redesigned around actual daily use.
-   - Current position cards.
-   - This Month summary.
-   - Next Up events.
-   - Six-Month Outlook.
-   - Detailed monthly cash flow moved to a tap-to-open month detail sheet instead of a giant dashboard ledger.
+2. Six-month forecast only
+   - Current month plus the next five months.
+   - No 3/6/12 selector.
 
-4. Automatic local snapshots removed.
-   - No app-open snapshots.
-   - No snapshot restore prompt.
-   - Existing old snapshot data is discarded on first v0.4.0 load.
-   - Encrypted manual backup/restore remains the recovery method.
+3. Home layout redesign
+   - Simplified top status cards.
+   - One unified 6-Month Forecast replaces duplicated Current Month / Next Up / Outlook sections.
+   - Current month is always expanded with all remaining projected events.
+   - Future months are collapsed and can be expanded one at a time.
 
-5. App version and update controls added to Settings.
-   - Displays installed version.
-   - Automatically checks version.json on the hosted app.
-   - Shows Up to date / Update available.
-   - Check for update, Update & reload, and Force refresh app controls.
-   - Refresh/update clears app caches only; IndexedDB financial data is not cleared.
+4. Automatic local snapshots removed
+   - No automatic snapshot creation or snapshot restore UI.
+   - Manual encrypted backup/restore remains.
 
-6. Reset Local Data safety strengthened.
-   - Dedicated destructive-action sheet.
+5. Version and update controls
+   - Installed version in Settings.
+   - Automatic hosted version check.
+   - Check Update, Update & Reload, and Force Refresh controls.
+
+6. Reset Data protection
+   - Dedicated destructive confirmation.
    - Back Up First option.
-   - Must type DELETE before the final reset button is enabled.
+   - User must type DELETE before Reset Data is enabled.
 
-7. Recent Activity + Undo added.
-   - Reports shows recent Bill Hub changes.
-   - Most edits/adds/deletes/balance changes can be undone once during the current app session.
-   - A temporary Undo toast appears after reversible actions.
+7. Recent Activity + Undo
+   - Reports shows recent in-app changes.
+   - Undo is available for the latest change in the current session.
 
-8. Cash-flow entries now identify why they exist.
-   - CATCH-UP, EXTRA, OVERRIDE, POOL, SKIPPED, and RECONCILE labels appear where applicable.
-   - Item editor explains whether the item is recurring, a month override, or a one-time entry.
+8. Entry badges
+   - CATCH-UP, EXTRA, OVERRIDE, POOL, SKIPPED, and RECONCILE identify why a cash-flow item exists.
 
-9. Manual backup freshness + restore preview added.
-   - Settings shows the last recorded manual backup time.
-   - Warns when the recorded backup is 14+ days old.
-   - Encrypted restore now previews backup date, version, balance checkpoint, recurring bill count, and income source count before replacing local data.
+9. Backup status + restore preview
+   - Settings shows the last manual backup and backup age.
+   - Restore previews the backup before replacing current local data.
+   - FlowMap can restore both new FlowMap backups and legacy Bill Hub encrypted backups.
 
-ADDITIONAL INTERNAL FIX
-- Legacy financial migration routines were removed from the public app shell. v0.4.0 migration only normalizes generic app metadata and never rewrites stored financial names, amounts, statuses, or month overrides.
+10. Update-safe data protection
+   - App version is separate from stored financial data.
+   - App load performs only additive runtime defaults; it does not rewrite bill names, amounts, statuses, dates, or month overrides.
+   - Update/refresh uses a temporary financial integrity guard and automatically restores the pre-update state if an unexpected data change is detected.
 
-DATA MODEL
-- Upcoming = not submitted yet; remains projected.
-- Pending = submitted/initiated but not yet cleared; remains projected because the bank balance still includes it.
-- Cleared = expense actually left the bank.
-- Received = income actually reached the bank.
-- Daily balance updates reconcile unexplained decreases to Misc Daily and unexplained increases to Uncategorized Credit.
-- Spending pools represent remaining expected commitments, not transaction-by-transaction spending.
-- Each month ends at its projected bank balance; that exact ending becomes the next month's starting balance.
+11. Current-month-first Home
+   - Current month is expanded by default and cannot be accidentally collapsed.
+   - Future five months remain expandable.
+
+12. Copy and terminology cleanup
+   - Dashboard renamed Home.
+   - Removed redundant explanatory copy and the PRIVATE CASH-FLOW PLANNER header.
+   - Short, consistent labels across Home, Plan, Reports, and Settings.
+
+13. Rebrand to FlowMap
+   - App title, manifest, backup filenames, setup copy, Settings, and navigation now use FlowMap.
+   - Existing IndexedDB storage is preserved for compatibility.
+
+14. New FlowMap visual system
+   - Dark charcoal layered UI.
+   - Accent palette: green #22C55E, yellow #FACC15, red #EF4444, blue #3B82F6, purple #8B5CF6.
+   - FlowMap F-arrow brand mark in the header.
+   - App icon combines the cash-bill concept with the forward F/flow arrow.
+   - Included 512, 192, 180, 64, and 32 px icon assets.
+
+Additional safety improvement
+-----------------------------
+Large balance reconciliation differences (>= $500) now display a warning and require an additional confirmation before FlowMap creates a large Misc Daily or Uncategorized Credit entry.
+
+FILES TO DEPLOY
+---------------
+Upload/replace the contents of the app/ folder at the same GitHub Pages location used by the existing app:
+- index.html
+- styles.css
+- app.js
+- manifest.webmanifest
+- version.json
+- sw.js
+- icons/ folder
+
+Do not upload PRIVATE_DO_NOT_UPLOAD.
 
 BACKUPS
-- Top Backup button and Settings > Export encrypted backup create an AES-GCM encrypted .bhub file using a passphrase you choose.
-- Bill Hub records the export time locally to show backup freshness.
-- Restore encrypted backup decrypts the file, shows a preview, and only replaces local state after explicit confirmation.
-- Keep backup files somewhere external to the browser (for example Files/iCloud Drive).
+-------
+New exports are named FlowMap_Backup_YYYY-MM-DD.bhub and use the FlowMap encrypted backup format. FlowMap v0.5.0 still accepts legacy billhub-encrypted-v1 backups.
 
-UPDATES
-- app/version.json is the hosted version marker. Publish it with every release and update its version value.
-- Bill Hub checks that file with cache disabled.
-- Force Refresh clears Cache Storage/service-worker shell cache and reloads the hosted app. It does not delete IndexedDB.
-
-PRIVACY
-- app/ is safe to host as a generic shell because it contains no personal seed values.
-- Financial data remains in browser IndexedDB unless the user explicitly restores/imports data or resets local data.
+DATA STORAGE
+------------
+Financial data remains local in IndexedDB. No personal financial seed is embedded in the deployable app files.

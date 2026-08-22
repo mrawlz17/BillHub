@@ -1,5 +1,8 @@
-const CACHE='billhub-shell-v0.4.0';
-const ASSETS=['./','./index.html','./styles.css?v=0.4.0','./app.js?v=0.4.0','./manifest.webmanifest'];
+const CACHE='flowmap-shell-v0.5.0';
+const ASSETS=[
+  './','./index.html','./styles.css?v=0.5.0','./app.js?v=0.5.0','./manifest.webmanifest','./version.json',
+  './icons/flowmap-64.png','./icons/flowmap-192.png','./icons/flowmap-512.png','./icons/apple-touch-icon.png','./icons/flowmap-mark.png'
+];
 
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));
@@ -17,16 +20,14 @@ self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
   const url=new URL(event.request.url);
 
-  // Always ask the network for the hosted version marker so stale app shells can detect updates.
   if(url.pathname.endsWith('/version.json')||url.pathname.endsWith('version.json')){
     event.respondWith(fetch(event.request,{cache:'no-store'}));
     return;
   }
 
-  // Navigations are network-first so a deployed update can replace an old cached index immediately.
   if(event.request.mode==='navigate'){
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request,{cache:'no-store'})
         .then(response=>{
           const copy=response.clone();
           caches.open(CACHE).then(cache=>cache.put('./index.html',copy));

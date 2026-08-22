@@ -3,29 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#111317" />
-  <title>Bill Hub</title>
+  <meta name="theme-color" content="#101216" />
+  <title>FlowMap</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=0.4.0" />
+  <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="styles.css?v=0.5.0" />
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <div class="eyebrow">PRIVATE CASH-FLOW PLANNER</div>
-      <h1>Bill Hub</h1>
+    <div class="brand">
+      <img src="icons/flowmap-mark.png" alt="" class="brand-mark" />
+      <h1><span>Flow</span><span class="brand-map">Map</span></h1>
     </div>
-    <button id="backupBtn" class="iconbtn" title="Export encrypted backup">Backup</button>
+    <button id="backupBtn" class="iconbtn" title="Export backup">Backup</button>
   </header>
 
   <main id="app">
     <section id="setupView" class="panel hidden">
-      <h2>Set up Bill Hub</h2>
-      <p class="muted">The app shell contains no personal financial data. Restore an encrypted Bill Hub backup, import a private seed, or start blank.</p>
+      <h2>Set up FlowMap</h2>
+      <p class="muted">Restore a backup, import private data, or start blank.</p>
       <div class="stack">
-        <label class="filebtn">Restore encrypted backup
+        <label class="filebtn">Restore Backup
           <input id="setupRestoreBackupInput" type="file" accept=".bhub,.json,application/json" />
         </label>
-        <label class="filebtn secondary">Import private seed
+        <label class="filebtn secondary">Import Private Data
           <input id="seedImport" type="file" accept=".json,application/json" />
         </label>
         <button id="startBlankBtn" class="secondary">Start blank</button>
@@ -35,14 +37,14 @@
     <section id="dashboardView" class="hidden">
       <div class="hero-grid">
         <article class="card accent">
-          <div class="label">CURRENT BANK BALANCE</div>
+          <div class="label">BALANCE</div>
           <div id="currentBalance" class="bigmoney">$0.00</div>
           <div id="balanceUpdated" class="muted small">Not updated</div>
           <button id="updateBalanceBtn">Update balance</button>
         </article>
 
         <article class="card">
-          <div class="label">PENDING OUTFLOWS</div>
+          <div class="label">PENDING</div>
           <div id="pendingOutflows" class="metric">$0.00</div>
           <div class="muted small">Submitted, not cleared</div>
         </article>
@@ -54,45 +56,20 @@
         </article>
 
         <article class="card">
-          <div class="label">LOWEST PROJECTED</div>
+          <div class="label">LOWEST BALANCE</div>
           <div id="lowestBalance" class="metric">$0.00</div>
           <div id="lowestBalanceDate" class="muted small">—</div>
         </article>
       </div>
 
-      <article class="panel current-month-panel">
+      <article class="panel forecast-panel">
         <div class="panel-head">
           <div>
-            <div class="eyebrow">THIS MONTH</div>
-            <div id="thisMonthTitle" class="section-title-line"></div>
-          </div>
-          <button id="viewCurrentMonthBtn" class="secondary compact-btn">View month</button>
-        </div>
-        <div id="thisMonthStats" class="month-math current-month-math"></div>
-      </article>
-
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Next up</h2>
-            <p class="muted">The next cash-flow events from your current balance checkpoint.</p>
+            <h2>6-Month Forecast</h2>
           </div>
           <button id="addExtraBtn" class="secondary compact-btn">+ Extra</button>
         </div>
-        <div id="nextUpList" class="next-up-list"></div>
-      </article>
-
-      <article class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Six-month outlook</h2>
-            <p class="muted">Current month plus the next five. Tap any month for the detailed cash flow.</p>
-          </div>
-        </div>
-        <div class="forecast-headings">
-          <span>Month</span><span>Start</span><span>Income</span><span>Out</span><span>End</span>
-        </div>
-        <div id="monthCards" class="forecast-list"></div>
+        <div id="monthCards" class="forecast-accordion-list"></div>
       </article>
     </section>
 
@@ -100,8 +77,7 @@
       <article class="panel">
         <div class="panel-head">
           <div>
-            <h2>Bills & spending pools</h2>
-            <p class="muted">Recurring rules used to create future projections.</p>
+            <h2>Bills</h2>
           </div>
           <button id="addBillBtn" class="secondary">+ Add</button>
         </div>
@@ -112,7 +88,6 @@
         <div class="panel-head">
           <div>
             <h2>Income</h2>
-            <p class="muted">Recurring income schedules.</p>
           </div>
           <button id="addIncomeBtn" class="secondary">+ Add</button>
         </div>
@@ -124,65 +99,64 @@
       <article class="panel">
         <div class="panel-head">
           <div>
-            <h2>Recent activity</h2>
-            <p class="muted">Recent changes made inside Bill Hub.</p>
+            <h2>Recent Activity</h2>
           </div>
-          <button id="undoLastActionBtn" class="secondary compact-btn" disabled>Undo last</button>
+          <button id="undoLastActionBtn" class="secondary compact-btn" disabled>Undo</button>
         </div>
         <div id="recentActivity"></div>
       </article>
       <article class="panel">
-        <h2>Category tracking</h2>
-        <p class="muted">Cleared and reconciled spending only. Forecast commitments are excluded.</p>
+        <h2>Spending by Category</h2>
+        <p class="muted">Cleared spending only.</p>
         <div id="categoryReport"></div>
       </article>
       <article class="panel">
-        <h2>Balance history</h2>
+        <h2>Balance History</h2>
         <div id="balanceHistory"></div>
       </article>
     </section>
 
     <section id="settingsView" class="hidden">
       <article class="panel">
-        <h2>Backup & restore</h2>
+        <h2>Backup & Restore</h2>
         <div id="backupStatus" class="setting-row"></div>
         <div class="button-grid">
-          <button id="exportBackupBtn">Export encrypted backup</button>
-          <label class="filebtn secondary">Restore encrypted backup
+          <button id="exportBackupBtn">Export Backup</button>
+          <label class="filebtn secondary">Restore Backup
             <input id="restoreBackupInput" type="file" accept=".bhub,.json,application/json" />
           </label>
         </div>
       </article>
 
       <article class="panel">
-        <h2>App update</h2>
+        <h2>App Update</h2>
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.4.0</strong>
+            <strong id="appVersion">v0.5.0</strong>
           </div>
           <div class="update-status-wrap">
             <span id="updateStatus" class="update-pill">Checking…</span>
           </div>
         </div>
-        <p id="updateDetail" class="muted small">Bill Hub checks the hosted app for a newer version. Updating never clears IndexedDB financial data.</p>
+        <p id="updateDetail" class="muted small">FlowMap checks for a newer version. Financial data is protected during updates.</p>
         <div class="button-grid update-buttons">
-          <button id="checkUpdateBtn" class="secondary">Check for update</button>
-          <button id="applyUpdateBtn" class="hidden">Update & reload</button>
-          <button id="forceRefreshBtn" class="secondary">Force refresh app</button>
+          <button id="checkUpdateBtn" class="secondary">Check Update</button>
+          <button id="applyUpdateBtn" class="hidden">Update & Reload</button>
+          <button id="forceRefreshBtn" class="secondary">Force Refresh</button>
         </div>
       </article>
 
       <article class="panel">
-        <h2>Private data</h2>
-        <p class="muted">Financial data is stored in this browser using IndexedDB. The app code itself contains no personal seed data.</p>
-        <button id="resetBtn" class="danger">Reset local data</button>
+        <h2>Local Data</h2>
+        <p class="muted">Financial data stays in this browser.</p>
+        <button id="resetBtn" class="danger">Reset Data</button>
       </article>
     </section>
   </main>
 
   <nav class="bottomnav">
-    <button data-view="dashboardView" class="active">Dashboard</button>
+    <button data-view="dashboardView" class="active">Home</button>
     <button data-view="planView">Plan</button>
     <button data-view="reportsView">Reports</button>
     <button data-view="settingsView">Settings</button>
@@ -237,8 +211,8 @@
 
   <dialog id="balanceDialog">
     <form method="dialog" id="balanceForm">
-      <h3 id="balanceDialogTitle" tabindex="-1">Update account balance</h3>
-      <p class="muted">Enter the current cleared bank balance. Bill Hub will reconcile the difference since your last checkpoint.</p>
+      <h3 id="balanceDialogTitle" tabindex="-1">Update Balance</h3>
+      <p class="muted">Enter the cleared bank balance. FlowMap will reconcile the difference.</p>
       <label>Current balance
         <input id="newBalanceInput" type="number" step="0.01" required inputmode="decimal" />
       </label>
@@ -333,9 +307,9 @@
 
   <dialog id="resetDialog">
     <div class="dialog-shell">
-      <h3 id="resetDialogTitle" tabindex="-1">Delete all local Bill Hub data?</h3>
+      <h3 id="resetDialogTitle" tabindex="-1">Delete all local FlowMap data?</h3>
       <div class="danger-notice">
-        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, and local activity stored in this browser. Your encrypted backup files are not affected.
+        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, and local activity stored in this browser. Your backup files are not affected.
       </div>
       <button id="backupBeforeResetBtn" type="button" class="secondary full-btn">Back up first</button>
       <label class="confirm-label">Type <strong>DELETE</strong> to enable the final reset
@@ -343,11 +317,11 @@
       </label>
       <div class="dialog-actions">
         <button id="cancelResetBtn" type="button" class="secondary">Cancel</button>
-        <button id="confirmResetBtn" type="button" class="danger" disabled>Delete all local data</button>
+        <button id="confirmResetBtn" type="button" class="danger" disabled>Delete All Data</button>
       </div>
     </div>
   </dialog>
 
-  <script src="app.js?v=0.4.0"></script>
+  <script src="app.js?v=0.5.0"></script>
 </body>
 </html>

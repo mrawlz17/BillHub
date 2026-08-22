@@ -1,9 +1,12 @@
-const APP_VERSION='0.4.0';
+const APP_VERSION='0.5.0';
+const DATA_SCHEMA_VERSION=1;
 const FORECAST_MONTHS=6;
+// Keep the legacy DB name so existing local data survives the FlowMap rebrand.
 const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
 let activeItem=null, editingRuleId=null, editingIncomeId=null, extraRelatedRuleId=null;
-let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null;
+let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null, openFutureMonthKey=null;
+let updateGuardNotice=null;
 let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
 
 const $=id=>document.getElementById(id);
@@ -36,9 +39,49 @@ function idbGet(k){return new Promise((res,rej)=>{const r=db.transaction('kv').o
 function idbSet(k,v){return new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})}
 function idbDel(k){return new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').delete(k);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})}
 
+function financialCore(s){
+  if(!s)return null;
+  return {
+    categories:s.categories||[],
+    balance:s.balance||null,
+    balanceHistory:s.balanceHistory||[],
+    bills:s.bills||[],
+    incomeRules:s.incomeRules||[],
+    manualItems:s.manualItems||[],
+    reconciledEventIds:s.reconciledEventIds||[]
+  };
+}
+function financialCoreJSON(s){return JSON.stringify(financialCore(s))}
+async function armUpdateGuard(reason='refresh'){
+  if(!state)return;
+  const snapshot=structuredClone(state);
+  await idbSet('updateGuard',{
+    createdAt:nowISO(),
+    fromVersion:APP_VERSION,
+    reason,
+    core:financialCoreJSON(snapshot),
+    state:snapshot
+  });
+}
+async function verifyUpdateGuard(current){
+  const guard=await idbGet('updateGuard');
+  if(!guard)return current;
+  const unchanged=financialCoreJSON(current)===guard.core;
+  if(!unchanged){
+    await idbSet('state',guard.state);
+    await idbDel('updateGuard');
+    updateGuardNotice='FlowMap blocked an update because financial data changed. Your pre-update data was restored.';
+    return structuredClone(guard.state);
+  }
+  await idbDel('updateGuard');
+  updateGuardNotice='Update verified — financial data unchanged.';
+  return current;
+}
+
 function blankState(){
  return {
   version:APP_VERSION,
+  schemaVersion:DATA_SCHEMA_VERSION,
   createdAt:nowISO(),
   categories:['Housing','Utilities','Vehicles','Fuel','Food','Insurance','Debt','Kids','School','Sports','Subscriptions','Taxes','Medical','Personal','Savings','Miscellaneous','Other'],
   balance:{amount:0,updatedAt:null},
@@ -271,7 +314,7 @@ function renderDashboard(){
  const p=projection(FORECAST_MONTHS);
  const buckets=monthBuckets(FORECAST_MONTHS);
  lastProjection=p.rows;
- const pending=(state.manualItems||[]).filter(x=>x.type==='expense'&&x.status==='pending').reduce((s,x)=>s+Math.abs(+x.amount),0);
+ const pending=(state.manualItems||[]).filter(x=>x.type==='expense'&&x.status==='pending').reduce((sum,x)=>sum+Math.abs(+x.amount),0);
  $('pendingOutflows').textContent=money(pending);
  const ni=p.items.find(x=>x.type==='income'&&x.status!=='received'&&x.status!=='skipped');
  $('nextIncome').textContent=ni?money(ni.amount):'$0.00';
@@ -280,32 +323,40 @@ function renderDashboard(){
  $('lowestBalance').className='metric '+(p.low<0?'negative':'');
  $('lowestBalanceDate').textContent=dstr(p.lowDate);
 
- const current=buckets[0];
- if(current){
-   $('thisMonthTitle').innerHTML=`<span>${current.longLabel}</span>${current.threePaySources.length?`<span class="payday-badge">3-paycheck month · ${current.threePaySources.join(', ')}</span>`:''}`;
-   $('thisMonthStats').innerHTML=monthMathHTML(current);
-   $('viewCurrentMonthBtn').dataset.monthKey=current.key;
- }
-
- const nextRows=p.rows.slice(0,8).map(x=>({...x,projectedAfter:x.projectedBalance}));
- $('nextUpList').innerHTML=nextRows.length?nextRows.map(x=>cashItemHTML(x)).join(''):'<p class="muted">No upcoming projected activity.</p>';
- document.querySelectorAll('#nextUpList .month-cash-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
-
- $('monthCards').innerHTML=buckets.map(m=>`
-   <div class="forecast-row" data-month-key="${m.key}" role="button" tabindex="0" aria-label="Open ${m.longLabel} details">
-     <div class="forecast-month">
-       <div class="forecast-month-line"><strong>${m.label}</strong>${m.threePaySources.length?`<span class="payday-badge">3× ${m.threePaySources.join(', ')}</span>`:''}</div>
-       <span class="muted small">${m.net>=0?'+':''}${money(m.net)} net</span>
+ $('monthCards').innerHTML=buckets.map((m,index)=>{
+   const current=index===0;
+   const open=current||openFutureMonthKey===m.key;
+   const titleBadge=current?'<span class="current-pill">Current</span>':(m.threePaySources.length?`<span class="payday-badge">3× ${m.threePaySources.join(', ')}</span>`:'');
+   const toggleAttrs=current?'':`data-toggle-month="${m.key}" role="button" tabindex="0" aria-expanded="${open}"`;
+   return `<section class="forecast-accordion ${current?'current-month':''} ${open?'open':''}">
+     <div class="forecast-summary ${current?'':'forecast-toggle'}" ${toggleAttrs}>
+       <div class="forecast-summary-top">
+         <div class="forecast-title-line"><strong>${m.longLabel}</strong>${titleBadge}</div>
+         <div class="forecast-net ${m.net<0?'negative':'positive'}">${m.net>=0?'+':''}${money(m.net)}</div>
+       </div>
+       <div class="forecast-summary-math">
+         <div><span>Start</span><strong>${money(m.opening)}</strong></div>
+         <div><span>Income</span><strong class="positive">+${money(m.income)}</strong></div>
+         <div><span>Outflow</span><strong>-${money(m.expenses)}</strong></div>
+         <div><span>End</span><strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong></div>
+       </div>
+       ${current?'':`<span class="forecast-caret" aria-hidden="true">${open?'−':'+'}</span>`}
      </div>
-     <div class="forecast-stat forecast-start"><span class="forecast-stat-label">Start</span><strong>${money(m.opening)}</strong></div>
-     <div class="forecast-stat forecast-income"><span class="forecast-stat-label">Income</span><strong class="positive">+${money(m.income)}</strong></div>
-     <div class="forecast-stat forecast-out"><span class="forecast-stat-label">Out</span><strong>-${money(m.expenses)}</strong></div>
-     <div class="forecast-stat forecast-end ${m.ending<0?'negative':''}"><span class="forecast-stat-label">End</span><strong>${money(m.ending)}</strong></div>
-   </div>`).join('');
- document.querySelectorAll('[data-month-key]').forEach(el=>{
-   const open=()=>openMonthDetail(el.dataset.monthKey);
-   el.addEventListener('click',open);
-   el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});
+     <div class="forecast-body ${open?'':'hidden'}">
+       <div class="month-cash-list">${m.items.length?m.items.map(x=>cashItemHTML(x)).join(''):'<div class="empty-month">No remaining activity.</div>'}</div>
+     </div>
+   </section>`;
+ }).join('');
+
+ document.querySelectorAll('#monthCards .month-cash-item').forEach(el=>el.addEventListener('click',()=>openItemDialog(el.dataset.id)));
+ document.querySelectorAll('#monthCards [data-toggle-month]').forEach(el=>{
+   const toggle=()=>{
+     const key=el.dataset.toggleMonth;
+     openFutureMonthKey=openFutureMonthKey===key?null:key;
+     renderDashboard();
+   };
+   el.addEventListener('click',toggle);
+   el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle()}});
  });
 }
 function renderPlan(){
@@ -359,7 +410,7 @@ function renderSettings(){
  pill.className='update-pill';
  if(updateInfo.status==='available'){
    pill.textContent=`v${updateInfo.latest} available`;pill.classList.add('available');
-   detail.textContent='A newer hosted Bill Hub version is available. Updating reloads the app shell and keeps IndexedDB financial data intact.';
+   detail.textContent='A newer FlowMap version is available. Your financial data will be verified before and after the update.';
    apply.classList.remove('hidden');
  }else if(updateInfo.status==='ok'){
    pill.textContent='Up to date';pill.classList.add('ok');
@@ -367,11 +418,11 @@ function renderSettings(){
    apply.classList.add('hidden');
  }else if(updateInfo.status==='error'){
    pill.textContent='Check unavailable';pill.classList.add('error');
-   detail.textContent='Bill Hub could not reach the hosted version file. You can retry or use Force refresh app.';
+   detail.textContent='FlowMap could not check for updates. Retry or use Force Refresh.';
    apply.classList.add('hidden');
  }else{
    pill.textContent='Checking…';
-   detail.textContent='Bill Hub checks the hosted app for a newer version. Updating never clears IndexedDB financial data.';
+   detail.textContent='FlowMap checks for updates. Financial data is protected during refreshes.';
    apply.classList.add('hidden');
  }
 }
@@ -411,7 +462,6 @@ function openMonthDetail(key){
  $('monthDetailDialog').showModal();focusDialogTitle('monthDetailTitle');
 }
 $('closeMonthDetailBtn').addEventListener('click',()=>{$('monthDetailDialog').close();activeMonthKey=null});
-$('viewCurrentMonthBtn').addEventListener('click',e=>openMonthDetail(e.currentTarget.dataset.monthKey));
 
 function itemMonth(x){return (x.overrideMonth||x.date||'').slice(0,7)}
 function recurringRuleForItem(item){
@@ -546,24 +596,27 @@ $('addCatchupBtn').addEventListener('click',()=>{
 $('updateBalanceBtn').addEventListener('click',()=>{
  $('newBalanceInput').value=state.balance.amount.toFixed(2);$('reconcilePreview').classList.add('hidden');$('balanceDialog').showModal();focusDialogTitle('balanceDialogTitle');
 });
-$('newBalanceInput').addEventListener('input',()=>{
- const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
+function reconcileDelta(newBal){
  const events=(state.manualItems||[]).filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
  let expected=+state.balance.amount;
  for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
- const diff=newBal-expected;
+ return {events,expected,diff:+(newBal-expected).toFixed(2)};
+}
+$('newBalanceInput').addEventListener('input',()=>{
+ const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
+ const {expected,diff}=reconcileDelta(newBal);
+ const large=Math.abs(diff)>=500;
  $('reconcilePreview').classList.remove('hidden');
- $('reconcilePreview').innerHTML=`Expected after newly cleared items: <strong>${money(expected)}</strong><br>Unexplained difference: <strong class="${diff<0?'negative':'positive'}">${money(diff)}</strong><br><span class="muted">Negative becomes Misc Daily; positive becomes Uncategorized Credit.</span>`;
+ $('reconcilePreview').innerHTML=`Expected balance: <strong>${money(expected)}</strong><br>Difference: <strong class="${diff<0?'negative':'positive'}">${money(diff)}</strong><br><span class="muted">${diff<0?'Creates Misc Daily':'Creates Uncategorized Credit'}.</span>${large?'<div class="reconcile-warning">Large difference — verify received/cleared items before saving.</div>':''}`;
 });
 $('balanceForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
+ const preview=reconcileDelta(newBal);
+ if(Math.abs(preview.diff)>=500 && !confirm(`Large balance difference: ${money(preview.diff)}. Verify received and cleared items first. Save anyway?`))return;
  const oldBal=+state.balance.amount;
  await commitAction('Balance updated',`${money(oldBal)} → ${money(newBal)}`,async()=>{
-   const events=(state.manualItems||[]).filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
-   let expected=+state.balance.amount;
-   for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
-   const diff=+(newBal-expected).toFixed(2);
+   const {events,diff}=reconcileDelta(newBal);
    events.forEach(x=>x.reconciled=true);
    if(Math.abs(diff)>=0.01){
      state.manualItems.push({
@@ -646,15 +699,15 @@ async function importSeedFile(f){
  if(!f)return;
  try{
    let obj=JSON.parse(await f.text());
-   if(!obj.version||!obj.categories)throw new Error('Not a Bill Hub seed');
-   obj=migrateData(obj);
-   state=obj;undoState=null;logActivity('Private seed imported',f.name);
-   await idbSet('state',state);renderAll();showToast('Private seed imported',false);
- }catch(err){alert('Could not import seed: '+err.message)}
+   if(!obj.categories)throw new Error('Not FlowMap private data');
+   obj=normalizeStateInMemory(obj);
+   state=obj;undoState=null;logActivity('Private data imported',f.name);
+   await idbSet('state',state);renderAll();showToast('Private data imported',false);
+ }catch(err){alert('Could not import private data: '+err.message)}
 }
 $('seedImport').addEventListener('change',e=>importSeedFile(e.target.files[0]));
 $('startBlankBtn').addEventListener('click',async()=>{
- state=blankState();logActivity('Blank setup created','New local Bill Hub data');await idbSet('state',state);renderAll();
+ state=blankState();logActivity('Blank setup created','New local FlowMap data');await idbSet('state',state);renderAll();
 });
 
 async function deriveKey(pass,salt){
@@ -671,29 +724,29 @@ async function encryptedExport(){
  state.backupMeta=state.backupMeta||{};
  state.backupMeta.lastExportAt=exportedAt;
  state.backupMeta.lastExportVersion=APP_VERSION;
- logActivity('Backup exported','Encrypted manual backup created');
+ logActivity('Backup exported','Manual backup created');
  await idbSet('state',state);
  renderAll();
  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),key=await deriveKey(pass,salt);
  const data=new TextEncoder().encode(JSON.stringify(state));
  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,data);
- const payload={format:'billhub-encrypted-v1',salt:b64(salt),iv:b64(iv),data:b64(ct)};
+ const payload={format:'flowmap-encrypted-v1',app:'FlowMap',version:APP_VERSION,salt:b64(salt),iv:b64(iv),data:b64(ct)};
  const blob=new Blob([JSON.stringify(payload)],{type:'application/json'});
- const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`BillHub_Backup_${todayISO()}.bhub`;a.click();
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`FlowMap_Backup_${todayISO()}.bhub`;a.click();
  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
- showToast('Encrypted backup created',false);
+ showToast('Backup created',false);
 }
 $('backupBtn').addEventListener('click',encryptedExport);
 $('exportBackupBtn').addEventListener('click',encryptedExport);
 
 async function readEncryptedBackup(f){
- const payload=JSON.parse(await f.text());if(payload.format!=='billhub-encrypted-v1')throw new Error('Unsupported backup');
+ const payload=JSON.parse(await f.text());if(!['flowmap-encrypted-v1','billhub-encrypted-v1'].includes(payload.format))throw new Error('Unsupported backup');
  const pass=prompt('Backup passphrase');if(!pass)throw new Error('Canceled');
  const key=await deriveKey(pass,unb64(payload.salt));
  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(payload.iv)},key,unb64(payload.data));
  const raw=JSON.parse(new TextDecoder().decode(pt));
- const sourceVersion=raw.version||'Unknown';
- const restored=migrateData(raw);
+ const sourceVersion=raw.backupMeta?.lastExportVersion||raw.version||'Unknown';
+ const restored=normalizeStateInMemory(raw);
  restored.__restoreSourceVersion=sourceVersion;
  return restored;
 }
@@ -740,7 +793,7 @@ $('confirmResetBtn').addEventListener('click',async()=>{
  if($('resetConfirmInput').value.trim().toUpperCase()!=='DELETE')return;
  await idbDel('state');
  try{await idbDel('snapshots')}catch(_){ }
- state=null;undoState=null;$('resetDialog').close();renderAll();showToast('Local Bill Hub data deleted',false);
+ state=null;undoState=null;$('resetDialog').close();renderAll();showToast('Local FlowMap data deleted',false);
 });
 
 $('undoLastActionBtn').addEventListener('click',undoLastAction);
@@ -761,50 +814,53 @@ async function checkForUpdate(){
  }catch(err){updateInfo={status:'error',latest:null,checkedAt:nowISO(),error:err.message}}
  if(state)renderSettings();
 }
-async function forceRefreshApp(){
- const btn=$('forceRefreshBtn');btn.disabled=true;btn.textContent='Refreshing…';
+async function forceRefreshApp(trigger=null){
+ const btn=trigger?.currentTarget||$('forceRefreshBtn');
+ const original=btn.textContent;
+ btn.disabled=true;btn.textContent='Refreshing…';
  try{
+   await armUpdateGuard(updateInfo.status==='available'?'app update':'force refresh');
    if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
    if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())try{await r.update()}catch(_){ }}
- }finally{window.location.reload()}
+   window.location.reload();
+ }catch(err){
+   btn.disabled=false;btn.textContent=original;
+   alert('Refresh stopped because FlowMap could not create the update safety guard. Your data was not changed.');
+ }
 }
 $('checkUpdateBtn').addEventListener('click',checkForUpdate);
-$('applyUpdateBtn').addEventListener('click',forceRefreshApp);
-$('forceRefreshBtn').addEventListener('click',forceRefreshApp);
+$('applyUpdateBtn').addEventListener('click',e=>forceRefreshApp(e));
+$('forceRefreshBtn').addEventListener('click',e=>forceRefreshApp(e));
 document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState==='visible' && (!updateInfo.checkedAt||Date.now()-new Date(updateInfo.checkedAt).getTime()>15*60000))checkForUpdate();
 });
 
-function migrateData(s){
+function normalizeStateInMemory(s){
  if(!s)return s;
- // v0.4.0 intentionally performs only generic schema normalization.
- // Financial rules, amounts, names, statuses, and month overrides are never rewritten by app migration code.
- s.categories=s.categories||blankState().categories;
- s.balance=s.balance||{amount:0,updatedAt:null};
- s.balanceHistory=s.balanceHistory||[];
- s.bills=s.bills||[];
- s.incomeRules=s.incomeRules||[];
- s.manualItems=s.manualItems||[];
- s.reconciledEventIds=s.reconciledEventIds||[];
- s.reserves=[];
- s.preferences=s.preferences||{};
- if('forecastMonths' in s.preferences)delete s.preferences.forecastMonths;
- s.activity=s.activity||[];
- s.backupMeta=s.backupMeta||{lastExportAt:null,lastExportVersion:null};
- s.version=APP_VERSION;
+ // Additive runtime defaults only. Financial records are never rewritten on app load.
+ if(!Array.isArray(s.categories))s.categories=blankState().categories;
+ if(!s.balance)s.balance={amount:0,updatedAt:null};
+ if(!Array.isArray(s.balanceHistory))s.balanceHistory=[];
+ if(!Array.isArray(s.bills))s.bills=[];
+ if(!Array.isArray(s.incomeRules))s.incomeRules=[];
+ if(!Array.isArray(s.manualItems))s.manualItems=[];
+ if(!Array.isArray(s.reconciledEventIds))s.reconciledEventIds=[];
+ if(!s.preferences)s.preferences={};
+ if(!Array.isArray(s.activity))s.activity=[];
+ if(!s.backupMeta)s.backupMeta={lastExportAt:null,lastExportVersion:null};
+ if(!s.schemaVersion)s.schemaVersion=DATA_SCHEMA_VERSION;
  return s;
 }
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 (async()=>{
  await openDB();
- try{await idbDel('snapshots')}catch(_){ }
  state=await idbGet('state')||null;
  if(state){
-   const beforeVersion=state.version;
-   state=migrateData(state);
-   if(beforeVersion!==state.version)await idbSet('state',state);
+   state=await verifyUpdateGuard(state);
+   state=normalizeStateInMemory(state);
  }
  renderAll();
  checkForUpdate();
+ if(updateGuardNotice)setTimeout(()=>showToast(updateGuardNotice,false),250);
 })();
