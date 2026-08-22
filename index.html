@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=0.6.2" />
+  <link rel="stylesheet" href="styles.css?v=0.7.0" />
 </head>
 <body>
   <header class="topbar">
@@ -190,12 +190,26 @@
         <div id="minimumBalanceStatus" class="muted small"></div>
       </article>
 
+
+      <article class="panel integrity-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Financial Integrity</h2>
+            <p class="muted small">Independent consistency checks against the live cash-flow state.</p>
+          </div>
+          <span id="integrityStatus" class="integrity-pill">Not run</span>
+        </div>
+        <div id="integritySummary" class="integrity-summary muted small">Run the check to validate the forecast and stored financial state.</div>
+        <div id="integrityChecks" class="integrity-checks"></div>
+        <button id="runIntegrityBtn" type="button" class="secondary full-btn">Run Integrity Check</button>
+      </article>
+
       <article class="panel">
         <h2>App Update</h2>
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.6.2</strong>
+            <strong id="appVersion">v0.7.0</strong>
           </div>
           <div class="update-status-wrap">
             <span id="updateStatus" class="update-pill">Checking…</span>
@@ -431,6 +445,7 @@
     </div>
   </dialog>
 
-  <script src="app.js?v=0.6.2"></script>
+  <script src="finance-engine.js?v=0.7.0"></script>
+  <script src="app.js?v=0.7.0"></script>
 </body>
 </html>

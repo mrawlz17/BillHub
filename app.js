@@ -1,5 +1,6 @@
-const APP_VERSION='0.6.2';
+const APP_VERSION='0.7.0';
 const DATA_SCHEMA_VERSION=1;
+const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
 // Keep the legacy DB name so existing local data survives the FlowMap rebrand.
 const DB_NAME='billhub-db', DB_VERSION=1;
@@ -9,6 +10,7 @@ let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null, o
 let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='goalsPane', whatIfScenario=null;
 let updateGuardNotice=null;
 let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
+let integrityInfo=null;
 
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0));
@@ -67,23 +69,30 @@ function protectedCore(s){
   };
 }
 function protectedCoreJSON(s){return JSON.stringify(protectedCore(s))}
+function protectedCoreStable(s){return Finance.protectedFingerprint(s)}
 async function armUpdateGuard(reason='refresh'){
   if(!state)return;
   const snapshot=structuredClone(state);
   await idbSet('updateGuard',{
-    guardVersion:2,
+    guardVersion:3,
     createdAt:nowISO(),
     fromVersion:APP_VERSION,
     reason,
-    core:protectedCoreJSON(snapshot),
+    core:protectedCoreStable(snapshot),
     state:snapshot
   });
 }
 async function verifyUpdateGuard(current){
   const guard=await idbGet('updateGuard');
   if(!guard)return current;
-  // v0.5 guards protected the original financial core. v0.6 guards also protect goals/settings.
-  const currentCore=guard.guardVersion===2?protectedCoreJSON(current):JSON.stringify(financialCoreV1(current));
+  // v0.5 protected the original financial core; v0.6 protected goals/settings with
+  // insertion-order JSON; v0.7+ uses a canonical fingerprint so harmless key order
+  // differences cannot trigger a false rollback.
+  const currentCore=guard.guardVersion>=3
+    ?protectedCoreStable(current)
+    :guard.guardVersion===2
+      ?protectedCoreJSON(current)
+      :JSON.stringify(financialCoreV1(current));
   const unchanged=currentCore===guard.core;
   if(!unchanged){
     await idbSet('state',guard.state);
@@ -175,170 +184,38 @@ function biweeklyDates(anchor,start,end){
   return arr;
 }
 
-function genBillOccurrences(start,end){
- const out=[];
- for(const b of state.bills.filter(x=>x.active!==false)){
-   if(b.schedule==='monthly_day'){
-     let cur=new Date(start.getFullYear(),start.getMonth(),1,12);
-     const stop=new Date(end.getFullYear(),end.getMonth(),1,12);
-     while(cur<=stop){
-       const dt=safeDay(cur.getFullYear(),cur.getMonth(),b.day||1);
-       if(dt>=start && dt<=end)out.push({id:`rule:${b.id}:${isoDate(dt)}`,ruleId:b.id,type:'expense',kind:b.kind||'bill',name:b.name,category:b.category,amount:+b.amount,date:isoDate(dt),status:'upcoming',generated:true});
-       cur=addMonths(cur,1);
-     }
-   }else if(b.schedule==='biweekly'&&b.anchor){
-     for(const dt of biweeklyDates(b.anchor,start,end))out.push({id:`rule:${b.id}:${isoDate(dt)}`,ruleId:b.id,type:'expense',kind:b.kind||'pool',name:b.name,category:b.category,amount:+b.amount,date:isoDate(dt),status:'upcoming',generated:true});
-   }else if(b.schedule==='second_monday'){
-     let cur=new Date(start.getFullYear(),start.getMonth(),1,12);
-     const stop=new Date(end.getFullYear(),end.getMonth(),1,12);
-     while(cur<=stop){
-       const dt=secondMonday(cur.getFullYear(),cur.getMonth());
-       if(dt>=start&&dt<=end)out.push({id:`rule:${b.id}:${isoDate(dt)}`,ruleId:b.id,type:'expense',kind:b.kind||'bill',name:b.name,category:b.category,amount:+b.amount,date:isoDate(dt),status:'upcoming',generated:true});
-       cur=addMonths(cur,1);
-     }
-   }
- }
- return out;
-}
-function genIncomeOccurrences(start,end){
- const out=[];
- for(const r of state.incomeRules.filter(x=>x.active!==false)){
-   if(r.schedule==='twice_monthly'){
-     let cur=new Date(start.getFullYear(),start.getMonth(),1,12), stop=new Date(end.getFullYear(),end.getMonth(),1,12);
-     while(cur<=stop){
-       for(const day of [10,25]){
-         const dt=safeDay(cur.getFullYear(),cur.getMonth(),day);
-         if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
-       }
-       cur=addMonths(cur,1);
-     }
-   } else if(r.schedule==='biweekly'&&r.anchor){
-     for(const dt of biweeklyDates(r.anchor,start,end))out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
-   } else if(r.schedule==='second_monday'){
-     let cur=new Date(start.getFullYear(),start.getMonth(),1,12),stop=new Date(end.getFullYear(),end.getMonth(),1,12);
-     while(cur<=stop){
-       const dt=secondMonday(cur.getFullYear(),cur.getMonth());
-       if(dt>=start&&dt<=end)out.push({id:`income:${r.id}:${isoDate(dt)}`,ruleId:r.id,type:'income',kind:'paycheck',name:r.name,category:'Income',amount:+r.amount,date:isoDate(dt),status:'upcoming',generated:true});
-       cur=addMonths(cur,1);
-     }
-   }
- }
- return out;
-}
+function genBillOccurrences(start,end){return Finance.genBillOccurrences(state,start,end)}
+function genIncomeOccurrences(start,end){return Finance.genIncomeOccurrences(state,start,end)}
 
-function isResolvedItem(x){return ['cleared','received','skipped'].includes(x?.status)}
-function isUnresolvedOutflow(x){return !!x && x.type!=='income' && !isResolvedItem(x)}
-function isOverdueOutflow(x){
- if(!isUnresolvedOutflow(x)||!x.date)return false;
+function isResolvedItem(x){return Finance.isResolved(x)}
+function isUnresolvedOutflow(x){return Finance.isUnresolvedOutflow(x)}
+function isUnresolvedIncome(x){return Finance.isUnresolvedIncome(x)}
+function isOverdueItem(x){
+ if(!x||isResolvedItem(x)||!x.date)return false;
  const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
  const start=new Date(checkpoint);start.setHours(0,0,0,0);
  return new Date(x.date+'T12:00:00')<start;
 }
 
-// Before a new balance checkpoint moves past an unpaid recurring due date, preserve
-// that generated occurrence as a month-specific manual occurrence. This is the
-// occurrence ledger: once a bill becomes due, it remains in cash flow until the
-// user marks it Cleared or intentionally Skips that occurrence. The recurring
-// rule itself is never changed.
-function materializeDueRecurringOutflows(cutoffISO){
- const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
- const start=new Date(checkpoint);start.setHours(0,0,0,0);
- const cutoff=new Date(cutoffISO+'T00:00:00');
- if(!(cutoff>start))return 0;
- let gen=genBillOccurrences(start,cutoff).filter(x=>x.date<cutoffISO);
+// Before a balance checkpoint moves past a recurring due date, preserve the
+// generated occurrence as a month-specific ledger item. This applies to both
+// outflows and expected income. Passing time never resolves money by itself.
+function materializeDueRecurringItems(cutoffISO){
+ const due=Finance.dueRecurringOccurrences(state,cutoffISO,{includeIncome:true});
+ if(!due.length)return 0;
  const manuals=state.manualItems||[];
- const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
- const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
- const suppressNameMonth=new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||x.date.slice(0,7)}`));
- gen=gen.filter(x=>
-   !suppressExact.has(`${x.ruleId}|${x.date}`) &&
-   !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
-   !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
- );
- for(const x of gen){
+ for(const x of due){
    const m={...x,id:uid(),generated:false,overrideRuleId:x.ruleId,overrideRuleName:x.name,overrideMonth:x.date.slice(0,7),reconciled:false,materializedDueAt:nowISO()};
    delete m.ruleId;
    manuals.push(m);
  }
  state.manualItems=manuals;
- return gen.length;
+ return due.length;
 }
 
-function projectedItems(months=FORECAST_MONTHS,additionalItems=[]){
- const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
- const start=new Date(checkpoint); start.setHours(0,0,0,0);
- const end=addMonths(start,months); end.setDate(end.getDate()+5);
- let gen=[...genBillOccurrences(start,end),...genIncomeOccurrences(start,end)];
- // A balance checkpoint closes resolved history only. Any unresolved outflow stays
- // in the forward cash-flow path even if its original due date is now in the past.
- // forecastDate is transient calculation metadata; the stored due date is untouched.
- const manuals=(state.manualItems||[]).flatMap(x=>{
-   const dt=new Date(x.date+'T12:00:00');
-   const carryUnresolved=isUnresolvedOutflow(x)&&dt<start;
-   if(dt>end||(!carryUnresolved&&dt<start))return [];
-   return [{...x,...(carryUnresolved?{forecastDate:isoDate(start),carriedOverdue:true}:{})}];
- });
- const extras=(additionalItems||[]).filter(x=>new Date(x.date+'T12:00:00')>=start&&new Date(x.date+'T12:00:00')<=end);
- const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
- const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
- const suppressNameMonth=new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||x.date.slice(0,7)}`));
- gen=gen.filter(x=>
-   !suppressExact.has(`${x.ruleId}|${x.date}`) &&
-   !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
-   !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
- );
- return [...gen,...manuals,...extras].sort((a,b)=>{
-   const ad=a.forecastDate||a.date,bd=b.forecastDate||b.date;
-   return ad.localeCompare(bd)||(a.type==='income'?-1:1)||a.date.localeCompare(b.date);
- });
-}
-function projection(months=FORECAST_MONTHS,additionalItems=[]){
- const items=projectedItems(months,additionalItems);
- let bal=+state.balance.amount||0, low=bal, lowDate=state.balance.updatedAt||nowISO();
- const rows=[];
- for(const x of items){
-   if(x.status==='cleared'||x.status==='received'||x.status==='skipped') continue;
-   bal += x.type==='income'?+x.amount:-Math.abs(+x.amount);
-   rows.push({...x,projectedBalance:bal});
-   if(bal<low){low=bal;lowDate=x.forecastDate||x.date}
- }
- return {items,rows,ending:bal,low,lowDate};
-}
-function monthBuckets(months=FORECAST_MONTHS,additionalItems=[]){
- const items=projectedItems(months,additionalItems);
- const startDate=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
- let working=+state.balance.amount||0;
- const result=[];
- for(let i=0;i<months;i++){
-   const mStart=new Date(startDate.getFullYear(),startDate.getMonth()+i,1,12);
-   const mEnd=new Date(startDate.getFullYear(),startDate.getMonth()+i+1,0,12);
-   const opening=working;
-   let income=0,expenses=0;
-   const monthItems=[];
-   for(const x of items){
-     const dt=new Date((x.forecastDate||x.date)+'T12:00:00');
-     if(dt<mStart||dt>mEnd)continue;
-     if(x.status==='cleared'||x.status==='received'||x.status==='skipped')continue;
-     if(x.type==='income'){income+=+x.amount;working+=+x.amount}
-     else {expenses+=Math.abs(+x.amount);working-=Math.abs(+x.amount)}
-     monthItems.push({...x,projectedAfter:working});
-   }
-   const key=`${mStart.getFullYear()}-${String(mStart.getMonth()+1).padStart(2,'0')}`;
-   const incomeCounts={};
-   for(const x of monthItems.filter(x=>x.type==='income'))incomeCounts[x.name]=(incomeCounts[x.name]||0)+1;
-   const threePaySources=(state.incomeRules||[])
-     .filter(r=>r.schedule==='biweekly' && (incomeCounts[r.name]||0)>=3)
-     .map(r=>r.name);
-   result.push({
-     key,
-     label:mStart.toLocaleDateString('en-US',{month:'short',year:'numeric'}),
-     longLabel:mStart.toLocaleDateString('en-US',{month:'long',year:'numeric'}),
-     opening,income,expenses,net:income-expenses,ending:working,items:monthItems,
-     incomeCounts,threePaySources
-   });
- }
- return result;
-}
+function projectedItems(months=FORECAST_MONTHS,additionalItems=[]){return Finance.projectedItems(state,months,additionalItems)}
+function projection(months=FORECAST_MONTHS,additionalItems=[]){return Finance.projection(state,months,additionalItems)}
+function monthBuckets(months=FORECAST_MONTHS,additionalItems=[]){return Finance.monthBuckets(state,months,additionalItems)}
 
 function statusBadge(x){
  let s=x.status||'upcoming';
@@ -347,7 +224,7 @@ function statusBadge(x){
 }
 function entryTags(x){
  const tags=[];
- if(isOverdueOutflow(x))tags.push(['OVERDUE','overdue']);
+ if(isOverdueItem(x))tags.push(['OVERDUE','overdue']);
  if(x.kind==='catchup')tags.push(['CATCH-UP','catchup']);
  else if(x.kind==='extra')tags.push(['EXTRA','extra']);
  else if(x.kind==='reconciliation')tags.push(['RECONCILE','reconcile']);
@@ -548,7 +425,7 @@ function renderDashboard(){
  const p=projection(FORECAST_MONTHS);
  const buckets=monthBuckets(FORECAST_MONTHS);
  lastProjection=p.rows;
- const pending=(state.manualItems||[]).filter(x=>x.type!=='income'&&x.status==='pending').reduce((sum,x)=>sum+Math.abs(+x.amount),0);
+ const pending=Finance.pendingTotal(state);
  $('pendingOutflows').textContent=money(pending);
  const ni=p.items.find(x=>x.type==='income'&&x.status!=='received'&&x.status!=='skipped');
  $('nextIncome').textContent=ni?money(ni.amount):'$0.00';
@@ -634,14 +511,43 @@ function renderReports(){
  $('undoLastActionBtn').disabled=!undoState;
  $('undoLastActionBtn').title=undoState?`Undo: ${undoState.label}`:'Nothing to undo in this session';
 
- const cleared=(state.manualItems||[]).filter(x=>x.type==='expense'&&x.status==='cleared'&&x.kind!=='savings_transfer');
- const sums={};
- for(const x of cleared)sums[x.category||'Other']=(sums[x.category||'Other']||0)+Math.abs(+x.amount);
+ const sums=Finance.clearedSpendingByCategory(state);
  const entries=Object.entries(sums).sort((a,b)=>b[1]-a[1]);
  $('categoryReport').innerHTML=entries.length?entries.map(([k,v])=>`<div class="report-row"><div></div><div>${k}</div><div class="amt">${money(v)}</div></div>`).join(''):'<p class="muted">No cleared spending yet.</p>';
  $('balanceHistory').innerHTML=(state.balanceHistory||[]).slice().reverse().map(h=>`<div class="history-row"><div>${dstr(h.at)}</div><div class="muted small">${h.note||'Balance checkpoint'}</div><div class="amt">${money(h.amount)}</div></div>`).join('')||'<p class="muted">No balance history yet.</p>';
 }
 function daysSince(iso){return iso?Math.floor((Date.now()-new Date(iso).getTime())/86400000):null}
+function runIntegrityCheck({toast=false}={}){
+ if(!state)return null;
+ integrityInfo=Finance.integrityCheck(state,FORECAST_MONTHS);
+ renderSettings();
+ if(toast){
+   const msg=integrityInfo.status==='pass'
+     ?`Integrity check passed ${integrityInfo.passed}/${integrityInfo.total}`
+     :integrityInfo.status==='review'
+       ?`Integrity check: ${integrityInfo.warnings.length} item${integrityInfo.warnings.length===1?'':'s'} to review`
+       :`Integrity check failed ${integrityInfo.failures.length} check${integrityInfo.failures.length===1?'':'s'}`;
+   showToast(msg,false);
+ }
+ return integrityInfo;
+}
+function renderIntegrity(){
+ const pill=$('integrityStatus'),summary=$('integritySummary'),box=$('integrityChecks');
+ if(!pill||!summary||!box)return;
+ pill.className='integrity-pill';
+ if(!integrityInfo){
+   pill.textContent='Not run';summary.textContent='Run the check to validate the forecast and stored financial state.';box.innerHTML='';return;
+ }
+ pill.textContent=integrityInfo.status==='pass'?'Passed':integrityInfo.status==='review'?'Review':'Failed';
+ pill.classList.add(integrityInfo.status);
+ const bad=integrityInfo.failures.length, warn=integrityInfo.warnings.length;
+ summary.textContent=`${integrityInfo.passed}/${integrityInfo.total} checks passed · Engine v${Finance.VERSION}${bad?` · ${bad} failed`:''}${warn?` · ${warn} review`:''}`;
+ box.innerHTML=integrityInfo.checks.map(c=>{
+   const cls=c.ok?'ok':c.severity==='warn'?'warn':'fail';
+   const icon=c.ok?'✓':c.severity==='warn'?'!':'×';
+   return `<div class="integrity-row ${cls}"><div class="integrity-icon">${icon}</div><div class="integrity-main"><strong>${escapeHTML(c.label)}</strong><span>${escapeHTML(c.detail||'')}</span></div></div>`;
+ }).join('');
+}
 function renderSettings(){
  const last=state.backupMeta?.lastExportAt||null;
  const age=daysSince(last);
@@ -673,6 +579,7 @@ function renderSettings(){
    detail.textContent='FlowMap checks for updates. Financial data is protected during refreshes.';
    apply.classList.add('hidden');
  }
+ renderIntegrity();
 }
 function renderAll(){
  const setup=!state;
@@ -720,6 +627,8 @@ $('saveMinimumBalanceBtn').addEventListener('click',async()=>{
  });
 });
 
+$('runIntegrityBtn').addEventListener('click',()=>runIntegrityCheck({toast:true}));
+
 function openMonthDetail(key){
  const m=monthBuckets(FORECAST_MONTHS).find(x=>x.key===key);if(!m)return;
  activeMonthKey=key;
@@ -762,7 +671,7 @@ function materializeOccurrence(item){
 }
 function setItemStatusOptions(item){
  if(item.type==='income'){
-   $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="received">Received</option>';
+   $('itemStatus').innerHTML='<option value="upcoming">Expected</option><option value="received">Received</option><option value="skipped">Skip / not received</option>';
  }else{
    $('itemStatus').innerHTML='<option value="upcoming">Upcoming</option><option value="pending">Pending / submitted</option><option value="cleared">Cleared</option>';
  }
@@ -874,23 +783,33 @@ function reconcileDelta(newBal){
  for(const x of events)expected+=x.type==='income'?+x.amount:-Math.abs(+x.amount);
  return {events,expected,diff:+(newBal-expected).toFixed(2)};
 }
+function reconcileMatches(diff){
+ return Finance.reconciliationCandidates(state,diff,todayISO(),3);
+}
+function reconcileMatchText(matches){
+ if(!matches.length)return '';
+ const group=matches[0];
+ return group.map(x=>`${x.name} ${money(x.amount)}`).join(' + ');
+}
 $('newBalanceInput').addEventListener('input',()=>{
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
  const {expected,diff}=reconcileDelta(newBal);
- const large=Math.abs(diff)>=500;
+ const large=Math.abs(diff)>=500,matches=reconcileMatches(diff),matchText=reconcileMatchText(matches);
  $('reconcilePreview').classList.remove('hidden');
- $('reconcilePreview').innerHTML=`Expected balance: <strong>${money(expected)}</strong><br>Difference: <strong class="${diff<0?'negative':'positive'}">${money(diff)}</strong><br><span class="muted">${diff<0?'Creates Misc Daily':'Creates Uncategorized Credit'}.</span>${large?'<div class="reconcile-warning">Large difference — verify received/cleared items before saving.</div>':''}`;
+ $('reconcilePreview').innerHTML=`Expected balance: <strong>${money(expected)}</strong><br>Difference: <strong class="${diff<0?'negative':'positive'}">${money(diff)}</strong><br><span class="muted">${diff<0?'Creates Misc Daily':'Creates Uncategorized Credit'}.</span>${matchText?`<div class="reconcile-warning">Possible match: <strong>${escapeHTML(matchText)}</strong>. Resolve the matching item${matches[0].length===1?'':'s'} first to avoid counting the same money twice.</div>`:large?'<div class="reconcile-warning">Large difference — verify received/cleared items before saving.</div>':''}`;
 });
 $('balanceForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
  const preview=reconcileDelta(newBal);
- if(Math.abs(preview.diff)>=500 && !confirm(`Large balance difference: ${money(preview.diff)}. Verify received and cleared items first. Save anyway?`))return;
+ const matches=reconcileMatches(preview.diff),matchText=reconcileMatchText(matches);
+ if(matchText && !confirm(`This balance difference exactly matches unresolved cash flow: ${matchText}. Saving now will create a reconciliation entry while leaving those items unresolved, which can double-count the money. Continue anyway?`))return;
+ if(!matchText && Math.abs(preview.diff)>=500 && !confirm(`Large balance difference: ${money(preview.diff)}. Verify received and cleared items first. Save anyway?`))return;
  const oldBal=+state.balance.amount;
  await commitAction('Balance updated',`${money(oldBal)} → ${money(newBal)}`,async()=>{
    // Preserve any recurring outflow whose due date is being crossed by this new
    // balance checkpoint. It remains unresolved until Cleared or Skipped.
-   materializeDueRecurringOutflows(todayISO());
+   materializeDueRecurringItems(todayISO());
    const {events,diff}=reconcileDelta(newBal);
    events.forEach(x=>x.reconciled=true);
    if(Math.abs(diff)>=0.01){
@@ -1156,15 +1075,23 @@ async function checkForUpdate(){
 async function forceRefreshApp(trigger=null){
  const btn=trigger?.currentTarget||$('forceRefreshBtn');
  const original=btn.textContent;
- btn.disabled=true;btn.textContent='Refreshing…';
+ btn.disabled=true;btn.textContent='Validating…';
  try{
+   const check=Finance.integrityCheck(state,FORECAST_MONTHS);
+   integrityInfo=check;renderSettings();
+   if(!check.ok){
+     btn.disabled=false;btn.textContent=original;
+     alert('Refresh stopped because FlowMap failed a financial integrity check. Your data was not changed. Open Settings → Financial Integrity for details.');
+     return;
+   }
+   btn.textContent='Refreshing…';
    await armUpdateGuard(updateInfo.status==='available'?'app update':'force refresh');
    if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
    if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())try{await r.update()}catch(_){ }}
    window.location.reload();
  }catch(err){
    btn.disabled=false;btn.textContent=original;
-   alert('Refresh stopped because FlowMap could not create the update safety guard. Your data was not changed.');
+   alert('Refresh stopped because FlowMap could not complete its safety checks. Your data was not changed.');
  }
 }
 $('checkUpdateBtn').addEventListener('click',checkForUpdate);
@@ -1199,6 +1126,7 @@ if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catc
  if(state){
    state=await verifyUpdateGuard(state);
    state=normalizeStateInMemory(state);
+   integrityInfo=Finance.integrityCheck(state,FORECAST_MONTHS);
  }
  renderAll();
  checkForUpdate();
