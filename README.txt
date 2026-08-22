@@ -1,4 +1,4 @@
-FlowMap v0.6.0
+FlowMap v0.6.2
 ================
 
 FlowMap is a private, local-first cash-flow planning web app. The actual cleared bank balance remains the source of truth. Known income, bills, spending pools, extras, catch-ups, and deliberate savings transfers are projected forward from that balance checkpoint.
@@ -8,7 +8,7 @@ IMPORTANT UPDATE RULE
 Do not reset or re-import your financial data when deploying this update.
 Replace the hosted app files only. FlowMap intentionally keeps the existing IndexedDB database name (billhub-db) so the current local balance, balance history, bills, income rules, manual entries, and overrides remain in place.
 
-v0.6.0 also keeps the update-safety system introduced in v0.5.0. A temporary update guard protects the stored financial/planning state during Update & Reload or Force Refresh. The guard is deleted after verification and is not a user-facing automatic snapshot system.
+v0.6.1 keeps the update-safety system introduced in v0.5.0. A temporary update guard protects the stored financial/planning state during Update & Reload or Force Refresh. The guard is deleted after verification and is not a user-facing automatic snapshot system.
 
 NEW IN v0.6.0
 -------------
@@ -83,7 +83,7 @@ Upload/replace the contents of the app/ folder at the same GitHub Pages location
 - sw.js
 - icons/ folder
 
-The icons are unchanged from v0.5.0. If the current FlowMap icons are already uploaded correctly, they do not need to be replaced for v0.6.0.
+The icons are unchanged from v0.5.0. If the current FlowMap icons are already uploaded correctly, they do not need to be replaced for v0.6.2.
 
 Do not upload PRIVATE_DO_NOT_UPLOAD.
 
@@ -94,3 +94,21 @@ New exports remain encrypted FlowMap backups and legacy Bill Hub encrypted backu
 DATA STORAGE
 ------------
 Personal financial data remains local in IndexedDB. No user-specific financial seed or savings goal is embedded in the deployable app files.
+
+
+v0.6.1 CRITICAL FORECAST FIX
+----------------------------
+- Pending submitted outflows now remain in the future cash-flow forecast even when their transaction date is before the latest balance checkpoint.
+- Updating the bank balance no longer makes older pending manual/month-override expenses disappear from the current month or Lowest Balance calculation.
+- Cleared/received/skipped history remains excluded from future cash flow.
+- This patch does not migrate, reseed, or rewrite financial records.
+
+
+v0.6.2 UNRESOLVED OUTFLOW / OVERDUE FIX
+-----------------------------------------
+- Unresolved outflows no longer disappear merely because their due date is before the latest balance checkpoint.
+- Upcoming and Pending manual entries are carried forward until Cleared, Skipped, or (for deletable one-time entries) Deleted.
+- Recurring occurrences that become due are materialized as month-specific occurrences when a balance checkpoint moves past them, so the original recurring rule remains untouched.
+- Past-due unresolved outflows receive an OVERDUE badge.
+- Original due dates remain unchanged; forecastDate is calculation-only metadata.
+- No financial migration/reseed is performed on app startup. The occurrence ledger is only extended when a user deliberately updates the bank-balance checkpoint.

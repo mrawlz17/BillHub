@@ -1,4 +1,4 @@
-const APP_VERSION='0.6.0';
+const APP_VERSION='0.6.2';
 const DATA_SCHEMA_VERSION=1;
 const FORECAST_MONTHS=6;
 // Keep the legacy DB name so existing local data survives the FlowMap rebrand.
@@ -226,12 +226,58 @@ function genIncomeOccurrences(start,end){
  return out;
 }
 
+function isResolvedItem(x){return ['cleared','received','skipped'].includes(x?.status)}
+function isUnresolvedOutflow(x){return !!x && x.type!=='income' && !isResolvedItem(x)}
+function isOverdueOutflow(x){
+ if(!isUnresolvedOutflow(x)||!x.date)return false;
+ const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
+ const start=new Date(checkpoint);start.setHours(0,0,0,0);
+ return new Date(x.date+'T12:00:00')<start;
+}
+
+// Before a new balance checkpoint moves past an unpaid recurring due date, preserve
+// that generated occurrence as a month-specific manual occurrence. This is the
+// occurrence ledger: once a bill becomes due, it remains in cash flow until the
+// user marks it Cleared or intentionally Skips that occurrence. The recurring
+// rule itself is never changed.
+function materializeDueRecurringOutflows(cutoffISO){
+ const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
+ const start=new Date(checkpoint);start.setHours(0,0,0,0);
+ const cutoff=new Date(cutoffISO+'T00:00:00');
+ if(!(cutoff>start))return 0;
+ let gen=genBillOccurrences(start,cutoff).filter(x=>x.date<cutoffISO);
+ const manuals=state.manualItems||[];
+ const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
+ const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
+ const suppressNameMonth=new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||x.date.slice(0,7)}`));
+ gen=gen.filter(x=>
+   !suppressExact.has(`${x.ruleId}|${x.date}`) &&
+   !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
+   !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
+ );
+ for(const x of gen){
+   const m={...x,id:uid(),generated:false,overrideRuleId:x.ruleId,overrideRuleName:x.name,overrideMonth:x.date.slice(0,7),reconciled:false,materializedDueAt:nowISO()};
+   delete m.ruleId;
+   manuals.push(m);
+ }
+ state.manualItems=manuals;
+ return gen.length;
+}
+
 function projectedItems(months=FORECAST_MONTHS,additionalItems=[]){
  const checkpoint=state.balance.updatedAt?new Date(state.balance.updatedAt):new Date();
  const start=new Date(checkpoint); start.setHours(0,0,0,0);
  const end=addMonths(start,months); end.setDate(end.getDate()+5);
  let gen=[...genBillOccurrences(start,end),...genIncomeOccurrences(start,end)];
- const manuals=(state.manualItems||[]).filter(x=>new Date(x.date+'T12:00:00')>=start&&new Date(x.date+'T12:00:00')<=end);
+ // A balance checkpoint closes resolved history only. Any unresolved outflow stays
+ // in the forward cash-flow path even if its original due date is now in the past.
+ // forecastDate is transient calculation metadata; the stored due date is untouched.
+ const manuals=(state.manualItems||[]).flatMap(x=>{
+   const dt=new Date(x.date+'T12:00:00');
+   const carryUnresolved=isUnresolvedOutflow(x)&&dt<start;
+   if(dt>end||(!carryUnresolved&&dt<start))return [];
+   return [{...x,...(carryUnresolved?{forecastDate:isoDate(start),carriedOverdue:true}:{})}];
+ });
  const extras=(additionalItems||[]).filter(x=>new Date(x.date+'T12:00:00')>=start&&new Date(x.date+'T12:00:00')<=end);
  const suppressExact=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`));
  const suppressMonth=new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||x.date.slice(0,7)}`));
@@ -241,7 +287,10 @@ function projectedItems(months=FORECAST_MONTHS,additionalItems=[]){
    !suppressMonth.has(`${x.ruleId}|${x.date.slice(0,7)}`) &&
    !suppressNameMonth.has(`${x.name}|${x.date.slice(0,7)}`)
  );
- return [...gen,...manuals,...extras].sort((a,b)=>a.date.localeCompare(b.date)||(a.type==='income'?-1:1));
+ return [...gen,...manuals,...extras].sort((a,b)=>{
+   const ad=a.forecastDate||a.date,bd=b.forecastDate||b.date;
+   return ad.localeCompare(bd)||(a.type==='income'?-1:1)||a.date.localeCompare(b.date);
+ });
 }
 function projection(months=FORECAST_MONTHS,additionalItems=[]){
  const items=projectedItems(months,additionalItems);
@@ -251,7 +300,7 @@ function projection(months=FORECAST_MONTHS,additionalItems=[]){
    if(x.status==='cleared'||x.status==='received'||x.status==='skipped') continue;
    bal += x.type==='income'?+x.amount:-Math.abs(+x.amount);
    rows.push({...x,projectedBalance:bal});
-   if(bal<low){low=bal;lowDate=x.date}
+   if(bal<low){low=bal;lowDate=x.forecastDate||x.date}
  }
  return {items,rows,ending:bal,low,lowDate};
 }
@@ -267,7 +316,7 @@ function monthBuckets(months=FORECAST_MONTHS,additionalItems=[]){
    let income=0,expenses=0;
    const monthItems=[];
    for(const x of items){
-     const dt=new Date(x.date+'T12:00:00');
+     const dt=new Date((x.forecastDate||x.date)+'T12:00:00');
      if(dt<mStart||dt>mEnd)continue;
      if(x.status==='cleared'||x.status==='received'||x.status==='skipped')continue;
      if(x.type==='income'){income+=+x.amount;working+=+x.amount}
@@ -298,6 +347,7 @@ function statusBadge(x){
 }
 function entryTags(x){
  const tags=[];
+ if(isOverdueOutflow(x))tags.push(['OVERDUE','overdue']);
  if(x.kind==='catchup')tags.push(['CATCH-UP','catchup']);
  else if(x.kind==='extra')tags.push(['EXTRA','extra']);
  else if(x.kind==='reconciliation')tags.push(['RECONCILE','reconcile']);
@@ -838,6 +888,9 @@ $('balanceForm').addEventListener('submit',async e=>{
  if(Math.abs(preview.diff)>=500 && !confirm(`Large balance difference: ${money(preview.diff)}. Verify received and cleared items first. Save anyway?`))return;
  const oldBal=+state.balance.amount;
  await commitAction('Balance updated',`${money(oldBal)} → ${money(newBal)}`,async()=>{
+   // Preserve any recurring outflow whose due date is being crossed by this new
+   // balance checkpoint. It remains unresolved until Cleared or Skipped.
+   materializeDueRecurringOutflows(todayISO());
    const {events,diff}=reconcileDelta(newBal);
    events.forEach(x=>x.reconciled=true);
    if(Math.abs(diff)>=0.01){

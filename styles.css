@@ -1232,3 +1232,6 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
   .goal-metrics-four{grid-template-columns:repeat(2,1fr)}
   .goal-card-actions{grid-template-columns:1fr}
 }
+
+/* v0.6.2 — unresolved past-due cash-flow state */
+.entry-tag.overdue{color:#ffd24a;border-color:rgba(250,204,21,.55);background:rgba(250,204,21,.09)}
