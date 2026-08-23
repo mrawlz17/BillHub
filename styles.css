@@ -1236,25 +1236,33 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
 /* v0.6.2 — unresolved past-due cash-flow state */
 .entry-tag.overdue{color:#ffd24a;border-color:rgba(250,204,21,.55);background:rgba(250,204,21,.09)}
 
-/* v0.7.0 — reliability / financial integrity */
-.integrity-panel{border-color:rgba(59,130,246,.28)}
-.integrity-pill{
-  display:inline-flex;align-items:center;justify-content:center;
-  min-width:72px;padding:5px 9px;border-radius:999px;border:1px solid var(--line);
-  font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+/* v0.7.1 — balance-difference pool allocation */
+.pool-allocation-box{
+  border:1px solid rgba(59,130,246,.32);
+  background:rgba(59,130,246,.055);
+  border-radius:12px;
+  padding:11px;
 }
-.integrity-pill.pass{color:var(--accent);border-color:rgba(34,197,94,.42);background:rgba(34,197,94,.07)}
-.integrity-pill.review{color:var(--warn);border-color:rgba(250,204,21,.42);background:rgba(250,204,21,.07)}
-.integrity-pill.fail{color:#ffaaa8;border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.07)}
-.integrity-summary{margin:8px 0 10px}
-.integrity-checks{display:grid;gap:6px;margin:9px 0 12px}
-.integrity-row{
-  display:grid;grid-template-columns:22px 1fr;gap:8px;align-items:start;
-  padding:8px 9px;border:1px solid var(--line);border-radius:10px;background:#15191e;
+.pool-allocation-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
+.pool-allocation-head strong{font-size:13px}
+.pool-allocation-head span{font-size:11px;color:var(--muted);text-align:right}
+.pool-allocation-help{font-size:11px;color:var(--muted);line-height:1.4;margin-bottom:10px}
+.pool-allocation-list{display:grid;gap:8px}
+.pool-allocation-row{
+  display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:10px;align-items:center;
+  padding:9px;border:1px solid var(--line);border-radius:10px;background:#15191e;
 }
-.integrity-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;background:#0f1216;border:1px solid var(--line)}
-.integrity-row.ok .integrity-icon{color:var(--accent);border-color:rgba(34,197,94,.38)}
-.integrity-row.warn .integrity-icon{color:var(--warn);border-color:rgba(250,204,21,.38)}
-.integrity-row.fail .integrity-icon{color:#ffaaa8;border-color:rgba(239,68,68,.38)}
-.integrity-main strong{display:block;font-size:12px;margin-bottom:2px}
-.integrity-main span{display:block;color:var(--muted);font-size:10px;line-height:1.35}
+.pool-allocation-name strong{display:block;font-size:12px}
+.pool-allocation-name span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.pool-allocation-row input{margin:0;text-align:right}
+.pool-allocation-summary{
+  display:grid;grid-template-columns:1fr auto;gap:5px 12px;
+  margin-top:10px;padding-top:9px;border-top:1px solid var(--line);font-size:12px;
+}
+.pool-allocation-summary strong{text-align:right}
+.pool-allocation-summary .misc-label{color:var(--muted)}
+.pool-allocation-summary .invalid{color:var(--danger)}
+@media(max-width:430px){
+  .pool-allocation-row{grid-template-columns:1fr}
+  .pool-allocation-row input{text-align:left}
+}

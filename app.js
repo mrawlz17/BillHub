@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.0';
+const APP_VERSION='0.7.1';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -10,7 +10,7 @@ let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null, o
 let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='goalsPane', whatIfScenario=null;
 let updateGuardNotice=null;
 let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
-let integrityInfo=null;
+let balanceAllocationDraft={};
 
 const $=id=>document.getElementById(id);
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0));
@@ -517,37 +517,6 @@ function renderReports(){
  $('balanceHistory').innerHTML=(state.balanceHistory||[]).slice().reverse().map(h=>`<div class="history-row"><div>${dstr(h.at)}</div><div class="muted small">${h.note||'Balance checkpoint'}</div><div class="amt">${money(h.amount)}</div></div>`).join('')||'<p class="muted">No balance history yet.</p>';
 }
 function daysSince(iso){return iso?Math.floor((Date.now()-new Date(iso).getTime())/86400000):null}
-function runIntegrityCheck({toast=false}={}){
- if(!state)return null;
- integrityInfo=Finance.integrityCheck(state,FORECAST_MONTHS);
- renderSettings();
- if(toast){
-   const msg=integrityInfo.status==='pass'
-     ?`Integrity check passed ${integrityInfo.passed}/${integrityInfo.total}`
-     :integrityInfo.status==='review'
-       ?`Integrity check: ${integrityInfo.warnings.length} item${integrityInfo.warnings.length===1?'':'s'} to review`
-       :`Integrity check failed ${integrityInfo.failures.length} check${integrityInfo.failures.length===1?'':'s'}`;
-   showToast(msg,false);
- }
- return integrityInfo;
-}
-function renderIntegrity(){
- const pill=$('integrityStatus'),summary=$('integritySummary'),box=$('integrityChecks');
- if(!pill||!summary||!box)return;
- pill.className='integrity-pill';
- if(!integrityInfo){
-   pill.textContent='Not run';summary.textContent='Run the check to validate the forecast and stored financial state.';box.innerHTML='';return;
- }
- pill.textContent=integrityInfo.status==='pass'?'Passed':integrityInfo.status==='review'?'Review':'Failed';
- pill.classList.add(integrityInfo.status);
- const bad=integrityInfo.failures.length, warn=integrityInfo.warnings.length;
- summary.textContent=`${integrityInfo.passed}/${integrityInfo.total} checks passed · Engine v${Finance.VERSION}${bad?` · ${bad} failed`:''}${warn?` · ${warn} review`:''}`;
- box.innerHTML=integrityInfo.checks.map(c=>{
-   const cls=c.ok?'ok':c.severity==='warn'?'warn':'fail';
-   const icon=c.ok?'✓':c.severity==='warn'?'!':'×';
-   return `<div class="integrity-row ${cls}"><div class="integrity-icon">${icon}</div><div class="integrity-main"><strong>${escapeHTML(c.label)}</strong><span>${escapeHTML(c.detail||'')}</span></div></div>`;
- }).join('');
-}
 function renderSettings(){
  const last=state.backupMeta?.lastExportAt||null;
  const age=daysSince(last);
@@ -564,7 +533,7 @@ function renderSettings(){
  pill.className='update-pill';
  if(updateInfo.status==='available'){
    pill.textContent=`v${updateInfo.latest} available`;pill.classList.add('available');
-   detail.textContent='A newer FlowMap version is available. Your financial data will be verified before and after the update.';
+   detail.textContent='A newer FlowMap version is available. Your financial data is protected during the update.';
    apply.classList.remove('hidden');
  }else if(updateInfo.status==='ok'){
    pill.textContent='Up to date';pill.classList.add('ok');
@@ -579,7 +548,6 @@ function renderSettings(){
    detail.textContent='FlowMap checks for updates. Financial data is protected during refreshes.';
    apply.classList.add('hidden');
  }
- renderIntegrity();
 }
 function renderAll(){
  const setup=!state;
@@ -627,8 +595,6 @@ $('saveMinimumBalanceBtn').addEventListener('click',async()=>{
  });
 });
 
-$('runIntegrityBtn').addEventListener('click',()=>runIntegrityCheck({toast:true}));
-
 function openMonthDetail(key){
  const m=monthBuckets(FORECAST_MONTHS).find(x=>x.key===key);if(!m)return;
  activeMonthKey=key;
@@ -659,8 +625,12 @@ function findMonthOverride(item){
 }
 function materializeOccurrence(item){
  if(!item.generated){
-   if(item.overrideRuleId&&!item.overrideMonth)item.overrideMonth=item.date.slice(0,7);
-   return item;
+   // projectedItems() returns copies. Always resolve a manual occurrence back to
+   // the stored IndexedDB state record before editing it, otherwise the UI can
+   // appear to save a change that disappears on the next render.
+   const stored=(state.manualItems||[]).find(x=>x.id===item.id)||item;
+   if(stored.overrideRuleId&&!stored.overrideMonth)stored.overrideMonth=stored.date.slice(0,7);
+   return stored;
  }
  const existing=findMonthOverride(item);
  if(existing)return existing;
@@ -775,7 +745,12 @@ $('addCatchupBtn').addEventListener('click',()=>{
 });
 
 $('updateBalanceBtn').addEventListener('click',()=>{
- $('newBalanceInput').value=state.balance.amount.toFixed(2);$('reconcilePreview').classList.add('hidden');$('balanceDialog').showModal();focusDialogTitle('balanceDialogTitle');
+ balanceAllocationDraft={};
+ $('newBalanceInput').value=state.balance.amount.toFixed(2);
+ $('reconcilePreview').classList.add('hidden');
+ $('poolAllocationBox').classList.add('hidden');
+ $('poolAllocationBox').innerHTML='';
+ $('balanceDialog').showModal();focusDialogTitle('balanceDialogTitle');
 });
 function reconcileDelta(newBal){
  const events=(state.manualItems||[]).filter(x=>(x.status==='cleared'||x.status==='received')&&!x.reconciled);
@@ -791,38 +766,140 @@ function reconcileMatchText(matches){
  const group=matches[0];
  return group.map(x=>`${x.name} ${money(x.amount)}`).join(' + ');
 }
-$('newBalanceInput').addEventListener('input',()=>{
+function poolShortName(item){
+ const raw=String(item?.name||item?.category||'Spending pool');
+ return raw.split(' – ')[0].split(' - ')[0].trim()||'Spending pool';
+}
+function balancePoolCandidates(){
+ return Finance.availableSpendingPools(state);
+}
+function balanceAllocationPlan(diff){
+ const decrease=Math.max(0,-Number(diff||0));
+ const byId={};
+ let total=0;
+ for(const pool of balancePoolCandidates()){
+   const raw=Number(balanceAllocationDraft[pool.id]||0);
+   const amount=Number.isFinite(raw)?Math.max(0,Math.round(raw*100)/100):0;
+   byId[pool.id]=amount;total+=amount;
+ }
+ total=Math.round(total*100)/100;
+ const misc=Math.round((decrease-total)*100)/100;
+ return {decrease,total,misc,byId,valid:total<=decrease+0.009};
+}
+function renderBalanceAllocationInputs(diff){
+ const box=$('poolAllocationBox'),pools=balancePoolCandidates();
+ if(!(diff<-.009)||!pools.length){
+   box.classList.add('hidden');box.innerHTML='';return;
+ }
+ const decrease=Math.abs(diff);
+ box.classList.remove('hidden');
+ box.innerHTML=`<div class="pool-allocation-head"><strong>Allocate this decrease</strong><span>${money(decrease)} bank decrease</span></div>
+   <div class="pool-allocation-help">If some of this spending came from Fuel, Groceries, or another active spending pool, enter it here. FlowMap will reduce that pool automatically. Anything left becomes Misc Daily.</div>
+   <div class="pool-allocation-list">${pools.map(pool=>`
+     <div class="pool-allocation-row">
+       <div class="pool-allocation-name"><strong>${escapeHTML(poolShortName(pool))}</strong><span>${escapeHTML(pool.name)} · ${money(pool.amount)} remaining</span></div>
+       <input class="pool-allocation-input" data-pool-id="${pool.id}" type="number" min="0" max="${Math.min(+pool.amount||0,decrease).toFixed(2)}" step="0.01" inputmode="decimal" placeholder="$0.00" value="${balanceAllocationDraft[pool.id]||''}" aria-label="Amount spent from ${escapeHTML(poolShortName(pool))}" />
+     </div>`).join('')}</div>
+   <div id="poolAllocationSummary" class="pool-allocation-summary"></div>`;
+ updateBalanceAllocationSummary(diff);
+}
+function updateBalanceAllocationSummary(diff){
+ const summary=$('poolAllocationSummary');if(!summary)return;
+ const plan=balanceAllocationPlan(diff);
+ summary.innerHTML=`<span>Allocated to pools</span><strong>${money(plan.total)}</strong>
+   <span class="misc-label">Misc Daily</span><strong class="${plan.valid?'':'invalid'}">${money(Math.max(0,plan.misc))}</strong>
+   ${plan.valid?'':`<span class="invalid">Allocation exceeds bank decrease</span><strong class="invalid">${money(Math.abs(plan.misc))} over</strong>`}`;
+}
+function renderBalanceReconcilePreview({rebuildPools=false}={}){
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
  const {expected,diff}=reconcileDelta(newBal);
- const large=Math.abs(diff)>=500,matches=reconcileMatches(diff),matchText=reconcileMatchText(matches);
+ if(rebuildPools)renderBalanceAllocationInputs(diff);
+ const plan=balanceAllocationPlan(diff);
+ const residualDiff=diff<0?+(diff+plan.total).toFixed(2):diff;
+ const large=Math.abs(residualDiff)>=500,matches=plan.valid?reconcileMatches(residualDiff):[],matchText=reconcileMatchText(matches);
  $('reconcilePreview').classList.remove('hidden');
- $('reconcilePreview').innerHTML=`Expected balance: <strong>${money(expected)}</strong><br>Difference: <strong class="${diff<0?'negative':'positive'}">${money(diff)}</strong><br><span class="muted">${diff<0?'Creates Misc Daily':'Creates Uncategorized Credit'}.</span>${matchText?`<div class="reconcile-warning">Possible match: <strong>${escapeHTML(matchText)}</strong>. Resolve the matching item${matches[0].length===1?'':'s'} first to avoid counting the same money twice.</div>`:large?'<div class="reconcile-warning">Large difference — verify received/cleared items before saving.</div>':''}`;
+ let disposition='';
+ if(diff<0){
+   if(plan.total>0) disposition=plan.misc>0?`After pool allocation, <strong>${money(plan.misc)}</strong> becomes Misc Daily.`:'The full bank decrease is allocated to spending pools.';
+   else disposition=`Creates Misc Daily of <strong>${money(Math.abs(diff))}</strong>.`;
+ }else if(diff>0) disposition=`Creates Uncategorized Credit of <strong>${money(diff)}</strong>.`;
+ else disposition='No unexplained difference.';
+ $('reconcilePreview').innerHTML=`Expected balance: <strong>${money(expected)}</strong><br>Difference: <strong class="${diff<0?'negative':diff>0?'positive':''}">${money(diff)}</strong><br><span class="muted">${disposition}</span>${!plan.valid?'<div class="reconcile-warning">Pool allocations cannot exceed the bank-balance decrease.</div>':matchText?`<div class="reconcile-warning">Possible match for the unallocated difference: <strong>${escapeHTML(matchText)}</strong>. Resolve the matching item${matches[0].length===1?'':'s'} first to avoid counting the same money twice.</div>`:large?'<div class="reconcile-warning">Large unallocated difference — verify received/cleared items before saving.</div>':''}`;
+ updateBalanceAllocationSummary(diff);
+}
+$('newBalanceInput').addEventListener('input',()=>{
+ balanceAllocationDraft={};
+ renderBalanceReconcilePreview({rebuildPools:true});
+});
+$('poolAllocationBox').addEventListener('input',e=>{
+ const input=e.target.closest('.pool-allocation-input');if(!input)return;
+ const n=Number(input.value);
+ balanceAllocationDraft[input.dataset.poolId]=Number.isFinite(n)?Math.max(0,n):0;
+ renderBalanceReconcilePreview();
 });
 $('balanceForm').addEventListener('submit',async e=>{
  e.preventDefault();
  const newBal=+$('newBalanceInput').value;if(!Number.isFinite(newBal))return;
  const preview=reconcileDelta(newBal);
- const matches=reconcileMatches(preview.diff),matchText=reconcileMatchText(matches);
- if(matchText && !confirm(`This balance difference exactly matches unresolved cash flow: ${matchText}. Saving now will create a reconciliation entry while leaving those items unresolved, which can double-count the money. Continue anyway?`))return;
- if(!matchText && Math.abs(preview.diff)>=500 && !confirm(`Large balance difference: ${money(preview.diff)}. Verify received and cleared items first. Save anyway?`))return;
+ const plan=balanceAllocationPlan(preview.diff);
+ if(!plan.valid){alert('Pool allocations cannot exceed the bank-balance decrease.');return}
+ const pools=balancePoolCandidates();
+ for(const pool of pools){
+   const amount=plan.byId[pool.id]||0;
+   if(amount>(+pool.amount||0)+0.009){alert(`${poolShortName(pool)} allocation cannot exceed ${money(pool.amount)} remaining.`);return}
+ }
+ const residualDiff=preview.diff<0?+(preview.diff+plan.total).toFixed(2):preview.diff;
+ const matches=reconcileMatches(residualDiff),matchText=reconcileMatchText(matches);
+ if(matchText && !confirm(`The unallocated balance difference exactly matches unresolved cash flow: ${matchText}. Saving now will create a reconciliation entry while leaving those items unresolved, which can double-count the money. Continue anyway?`))return;
+ if(!matchText && Math.abs(residualDiff)>=500 && !confirm(`Large unallocated balance difference: ${money(residualDiff)}. Verify received and cleared items first. Save anyway?`))return;
  const oldBal=+state.balance.amount;
- await commitAction('Balance updated',`${money(oldBal)} → ${money(newBal)}`,async()=>{
-   // Preserve any recurring outflow whose due date is being crossed by this new
-   // balance checkpoint. It remains unresolved until Cleared or Skipped.
+ const allocLabels=pools.filter(x=>(plan.byId[x.id]||0)>=.01).map(x=>`${poolShortName(x)} ${money(plan.byId[x.id])}`);
+ const detailParts=[`${money(oldBal)} → ${money(newBal)}`,...allocLabels];
+ if(residualDiff<-.009)detailParts.push(`Misc ${money(Math.abs(residualDiff))}`);
+ if(residualDiff>.009)detailParts.push(`Credit ${money(residualDiff)}`);
+ await commitAction('Balance updated',detailParts.join(' · '),async()=>{
+   // Preserve recurring obligations/income crossed by the new checkpoint first.
    materializeDueRecurringItems(todayISO());
    const {events,diff}=reconcileDelta(newBal);
    events.forEach(x=>x.reconciled=true);
-   if(Math.abs(diff)>=0.01){
+
+   let allocated=0;
+   for(const pool of pools){
+     const amount=Math.round((plan.byId[pool.id]||0)*100)/100;
+     if(amount<.01)continue;
+     const occurrence=materializeOccurrence(pool);
+     const remaining=Math.max(0,Math.round((Math.abs(+occurrence.amount||0)-amount)*100)/100);
+     occurrence.amount=remaining;
+     if(remaining<.01){
+       occurrence.amount=0;occurrence.status='cleared';occurrence.clearedAt=nowISO();occurrence.reconciled=true;
+     }else{
+       occurrence.clearedAt=null;
+       if(occurrence.status==='cleared'||occurrence.status==='skipped')occurrence.status='upcoming';
+     }
      state.manualItems.push({
-       id:uid(),type:diff<0?'expense':'income',kind:'reconciliation',
-       name:diff<0?'Misc Daily':'Uncategorized Credit',
-       category:diff<0?'Miscellaneous':'Other',amount:Math.abs(diff),date:todayISO(),
-       status:diff<0?'cleared':'received',clearedAt:nowISO(),reconciled:true,generated:false
+       id:uid(),type:'expense',kind:'pool_spend',
+       name:`${poolShortName(pool)} spend`,category:pool.category||'Other',amount,
+       date:todayISO(),status:'cleared',clearedAt:nowISO(),reconciled:true,generated:false,
+       relatedPoolId:occurrence.id,sourcePoolName:pool.name
+     });
+     allocated+=amount;
+   }
+
+   const finalResidual=diff<0?+(diff+allocated).toFixed(2):diff;
+   if(Math.abs(finalResidual)>=0.01){
+     state.manualItems.push({
+       id:uid(),type:finalResidual<0?'expense':'income',kind:'reconciliation',
+       name:finalResidual<0?'Misc Daily':'Uncategorized Credit',
+       category:finalResidual<0?'Miscellaneous':'Other',amount:Math.abs(finalResidual),date:todayISO(),
+       status:finalResidual<0?'cleared':'received',clearedAt:nowISO(),reconciled:true,generated:false
      });
    }
    state.balance={amount:newBal,updatedAt:nowISO()};
-   state.balanceHistory.push({at:state.balance.updatedAt,amount:newBal,note:'Daily balance update'});
+   const noteParts=['Daily balance update',...allocLabels];
+   if(finalResidual<-.009)noteParts.push(`Misc ${money(Math.abs(finalResidual))}`);
+   state.balanceHistory.push({at:state.balance.updatedAt,amount:newBal,note:noteParts.join(' · ')});
  });
+ balanceAllocationDraft={};
  $('balanceDialog').close();
 });
 
@@ -1075,23 +1152,15 @@ async function checkForUpdate(){
 async function forceRefreshApp(trigger=null){
  const btn=trigger?.currentTarget||$('forceRefreshBtn');
  const original=btn.textContent;
- btn.disabled=true;btn.textContent='Validating…';
+ btn.disabled=true;btn.textContent='Refreshing…';
  try{
-   const check=Finance.integrityCheck(state,FORECAST_MONTHS);
-   integrityInfo=check;renderSettings();
-   if(!check.ok){
-     btn.disabled=false;btn.textContent=original;
-     alert('Refresh stopped because FlowMap failed a financial integrity check. Your data was not changed. Open Settings → Financial Integrity for details.');
-     return;
-   }
-   btn.textContent='Refreshing…';
    await armUpdateGuard(updateInfo.status==='available'?'app update':'force refresh');
    if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
    if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())try{await r.update()}catch(_){ }}
    window.location.reload();
  }catch(err){
    btn.disabled=false;btn.textContent=original;
-   alert('Refresh stopped because FlowMap could not complete its safety checks. Your data was not changed.');
+   alert('Refresh stopped because FlowMap could not prepare the update safely. Your data was not changed.');
  }
 }
 $('checkUpdateBtn').addEventListener('click',checkForUpdate);
@@ -1126,7 +1195,6 @@ if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catc
  if(state){
    state=await verifyUpdateGuard(state);
    state=normalizeStateInMemory(state);
-   integrityInfo=Finance.integrityCheck(state,FORECAST_MONTHS);
  }
  renderAll();
  checkForUpdate();

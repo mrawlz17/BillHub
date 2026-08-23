@@ -1,6 +1,6 @@
-const CACHE='flowmap-shell-v0.7.0';
+const CACHE='flowmap-shell-v0.7.1';
 const ASSETS=[
-  './','./index.html','./styles.css?v=0.7.0','./finance-engine.js?v=0.7.0','./app.js?v=0.7.0','./manifest.webmanifest','./version.json',
+  './','./index.html','./styles.css?v=0.7.1','./finance-engine.js?v=0.7.1','./app.js?v=0.7.1','./manifest.webmanifest','./version.json',
   './icons/flowmap-64.png','./icons/flowmap-192.png','./icons/flowmap-512.png','./icons/apple-touch-icon.png','./icons/flowmap-mark.png'
 ];
 

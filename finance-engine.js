@@ -7,8 +7,6 @@
 
   const RESOLVED_OUTFLOW=new Set(['cleared','skipped']);
   const RESOLVED_INCOME=new Set(['received','skipped']);
-  const VALID_EXPENSE_STATUSES=new Set(['upcoming','pending','cleared','skipped']);
-  const VALID_INCOME_STATUSES=new Set(['upcoming','received','skipped']);
 
   function localDate(d){
     if(d instanceof Date)return new Date(d.getTime());
@@ -226,6 +224,17 @@
   function pendingTotal(state){
     return fromCents((state?.manualItems||[]).filter(x=>!isIncome(x)&&x.status==='pending').reduce((sum,x)=>sum+Math.abs(cents(x.amount)),0));
   }
+  function availableSpendingPools(state){
+    const firstMonth=monthKey(checkpointDate(state));
+    const seen=new Set();
+    return projectedItems(state,1).filter(x=>{
+      if(x.kind!=='pool'||!isUnresolvedOutflow(x)||cents(x.amount)<=0)return false;
+      const forecastMonth=monthKey(x.forecastDate||x.date);
+      if(forecastMonth!==firstMonth)return false;
+      if(seen.has(x.id))return false;
+      seen.add(x.id);return true;
+    });
+  }
   function clearedSpendingByCategory(state){
     const sums={};
     for(const x of state?.manualItems||[]){
@@ -244,90 +253,12 @@
   }
   function protectedFingerprint(state){return stableStringify(protectedCore(state))}
 
-  function integrityCheck(state,months=6){
-    const checks=[];
-    const add=(id,label,ok,detail='',severity='fail')=>checks.push({id,label,ok:!!ok,detail,severity});
-    if(!state){add('state','Local state exists',false,'No FlowMap state loaded.');return summarize(checks)}
-
-    const balance=Number(state?.balance?.amount);
-    add('balance','Balance checkpoint is valid',Number.isFinite(balance),Number.isFinite(balance)?`$${balance.toFixed(2)}`:'Balance is not numeric.');
-
-    const collections=[['bill',state.bills||[]],['income',state.incomeRules||[]],['manual',state.manualItems||[]],['goal',state.goals||[]]];
-    const ids=[];for(const [kind,arr] of collections)for(const x of arr)if(x?.id)ids.push(`${kind}:${x.id}`);
-    const rawIds=collections.flatMap(([,arr])=>arr.map(x=>x?.id).filter(Boolean));
-    add('unique-ids','Record IDs are unique',new Set(rawIds).size===rawIds.length,new Set(rawIds).size===rawIds.length?`${rawIds.length} IDs checked.`:'Duplicate record IDs found.');
-
-    const invalidAmounts=[];
-    for(const [kind,arr] of collections.slice(0,3))for(const x of arr){
-      const a=Number(x?.amount);if(!Number.isFinite(a)||a<0)invalidAmounts.push(`${kind}:${x?.name||x?.id||'unknown'}`);
-    }
-    add('amounts','Amounts are numeric and non-negative',invalidAmounts.length===0,invalidAmounts.length?`Invalid: ${invalidAmounts.slice(0,4).join(', ')}`:'All financial amounts are valid.');
-
-    const invalidStatus=[];
-    for(const x of state.manualItems||[]){
-      const valid=isIncome(x)?VALID_INCOME_STATUSES:VALID_EXPENSE_STATUSES;
-      if(!valid.has(x.status||'upcoming'))invalidStatus.push(`${x.name||x.id}:${x.status}`);
-    }
-    add('statuses','Manual-item statuses are valid',invalidStatus.length===0,invalidStatus.length?`Invalid: ${invalidStatus.slice(0,4).join(', ')}`:'Status/type combinations are valid.');
-
-    const billIds=new Set((state.bills||[]).map(x=>x.id)),incomeIds=new Set((state.incomeRules||[]).map(x=>x.id));
-    const orphanOverrides=(state.manualItems||[]).filter(x=>x.overrideRuleId&&!((isIncome(x)?incomeIds:billIds).has(x.overrideRuleId)));
-    add('overrides','Month overrides point to existing rules',orphanOverrides.length===0,orphanOverrides.length?`${orphanOverrides.length} orphaned override(s).`:'No orphaned overrides.','warn');
-
-    let p,b;
-    try{p=projection(state,months);b=monthBuckets(state,months)}catch(err){add('engine','Forecast engine completes',false,err.message);return summarize(checks)}
-    add('engine','Forecast engine completes',true,`${p.rows.length} active cash-flow events evaluated.`);
-
-    let carryOK=true,carryDetail='Every month opens at the prior month ending.';
-    for(let i=1;i<b.length;i++)if(cents(b[i].opening)!==cents(b[i-1].ending)){carryOK=false;carryDetail=`Mismatch ${b[i-1].key} → ${b[i].key}.`;break}
-    add('carry','Month carry-forward reconciles',carryOK,carryDetail);
-
-    const bucketEnding=b.length?b[b.length-1].ending:balance;
-    add('ending','Ledger and monthly forecast end at the same balance',cents(bucketEnding)===cents(p.ending),`Ledger ${fromCents(cents(p.ending)).toFixed(2)} · Months ${fromCents(cents(bucketEnding)).toFixed(2)}.`);
-
-    const rowLows=[cents(balance),...p.rows.map(r=>cents(r.projectedBalance))];const expectedLow=Math.min(...rowLows);
-    add('low','Lowest-balance calculation reconciles',expectedLow===cents(p.low),`Lowest ${fromCents(expectedLow).toFixed(2)}.`);
-
-    const items=projectedItems(state,months);
-    const occurrenceKeys=items.filter(x=>!x.scenario).map(x=>`${x.type}|${x.ruleId||x.overrideRuleId||x.id}|${x.date}|${x.generated?'g':'m'}`);
-    const exactKeys=items.map(x=>String(x.id));
-    add('duplicates','Projected event IDs are unique',new Set(exactKeys).size===exactKeys.length,new Set(exactKeys).size===exactKeys.length?`${exactKeys.length} projected IDs checked.`:'Duplicate projected IDs found.');
-
-    const pending=fromCents((state.manualItems||[]).filter(x=>!isIncome(x)&&x.status==='pending').reduce((s,x)=>s+Math.abs(cents(x.amount)),0));
-    add('pending','Pending total reconciles to pending records',cents(pendingTotal(state))===cents(pending),`${pending.toFixed(2)} pending.`);
-
-    const savingsInSpending=(state.manualItems||[]).filter(x=>x.kind==='savings_transfer'&&x.type==='expense'&&x.status==='cleared');
-    const category=clearedSpendingByCategory(state);const reported=cents(category.Savings||0);
-    const nonTransferSavings=(state.manualItems||[]).filter(x=>x.category==='Savings'&&x.kind!=='savings_transfer'&&x.type==='expense'&&x.status==='cleared').reduce((s,x)=>s+Math.abs(cents(x.amount)),0);
-    add('savings','Savings transfers are excluded from spending',reported===nonTransferSavings,savingsInSpending.length?`${savingsInSpending.length} cleared transfer(s) excluded correctly.`:'No cleared savings transfers to exclude.');
-
-    const largeReconciliations=(state.manualItems||[]).filter(x=>x.kind==='reconciliation'&&Math.abs(num(x.amount))>=500);
-    add('reconcile','No unusually large reconciliation entries',largeReconciliations.length===0,
-      largeReconciliations.length?`${largeReconciliations.length} reconciliation entr${largeReconciliations.length===1?'y':'ies'} at or above $500 should be reviewed.`:'No reconciliation entry is $500 or larger.','warn');
-
-    const history=state.balanceHistory||[];let historyOK=true,historyDetail='No balance history recorded.';
-    if(history.length&&state.balance?.updatedAt){
-      const last=history[history.length-1];historyOK=cents(last.amount)===cents(state.balance.amount);historyDetail=historyOK?'Latest history amount matches the checkpoint.':'Latest balance-history amount does not match the current checkpoint.';
-    }
-    add('history','Latest balance history matches current checkpoint',historyOK,historyDetail,'warn');
-
-    const unresolvedPast=(state.manualItems||[]).filter(x=>!isResolved(x)&&x.date&&localDate(x.date)<checkpointDate(state));
-    const projectedIds=new Set(items.map(x=>x.id));
-    const missingPast=unresolvedPast.filter(x=>!projectedIds.has(x.id));
-    add('overdue','Unresolved overdue items remain in forecast',missingPast.length===0,missingPast.length?`${missingPast.length} overdue item(s) missing.`:`${unresolvedPast.length} overdue unresolved item(s) retained.`);
-
-    return summarize(checks);
-  }
-  function summarize(checks){
-    const failures=checks.filter(x=>!x.ok&&x.severity!=='warn'),warnings=checks.filter(x=>!x.ok&&x.severity==='warn');
-    return {ok:failures.length===0,status:failures.length?'fail':warnings.length?'review':'pass',checks,passed:checks.filter(x=>x.ok).length,total:checks.length,failures,warnings,runAt:new Date().toISOString()};
-  }
 
   return {
-    VERSION:'1.0.0',
+    VERSION:'1.0.1',
     localDate,isoDate,addMonths,safeDay,secondMonday,biweeklyDates,monthKey,cents,fromCents,
     isIncome,isResolved,isUnresolvedOutflow,isUnresolvedIncome,cashDeltaCents,
     genBillOccurrences,genIncomeOccurrences,projectedItems,projection,monthBuckets,dueRecurringOccurrences,
-    pendingTotal,reconciliationCandidates,clearedSpendingByCategory,protectedCore,protectedFingerprint,integrityCheck,stableStringify,clone
+    pendingTotal,availableSpendingPools,reconciliationCandidates,clearedSpendingByCategory,protectedCore,protectedFingerprint,stableStringify,clone
   };
 });

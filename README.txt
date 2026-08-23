@@ -1,58 +1,50 @@
-FlowMap v0.7.0
+FlowMap v0.7.1
 ================
 
 FlowMap is a private, local-first cash-flow planner. The actual cleared bank balance remains the source of truth. Known income, bills, spending pools, extras, catch-ups, savings transfers, and unresolved overdue items are projected forward from that checkpoint.
 
-THIS RELEASE: RELIABILITY HARDENING
------------------------------------
-v0.7.0 is deliberately focused on forecast reliability rather than adding another feature.
+THIS RELEASE: BALANCE ALLOCATION FIX
+------------------------------------
+v0.7.1 fixes the daily balance workflow for Fuel/Groceries spending pools and removes the user-facing Financial Integrity panel from Settings.
 
 Key changes:
-- New dedicated finance-engine.js is the single authoritative cash-flow calculation layer.
-- Formal state-machine rules for Upcoming, Pending, Cleared, Skipped, Expected income, Received income, and overdue unresolved items.
-- Upcoming/Pending outflows remain in forecast until Cleared, Skipped, or deleted when deletion is allowed.
-- Expected income remains in forecast until Received or explicitly Skipped / not received.
-- Balance checkpoints materialize crossed recurring outflow AND income occurrences so passing time cannot silently remove money from the plan.
-- Home, What If, Goals, Reports, Pending total, and category spending use the shared finance engine.
-- Financial Integrity panel added under Settings.
-- Update & Reload / Force Refresh now run Financial Integrity first and block the refresh if a hard integrity check fails.
-- Update guard upgraded to canonical financial/planning fingerprints.
-- Balance reconciliation now detects exact matches to one or a combination of up to three unresolved items and warns before creating a reconciliation that could double-count the money.
+- When a bank balance decreases, FlowMap now offers active current-month spending pools in the same balance-update dialog.
+- You can allocate part of the bank decrease to Fuel, Groceries, or another active pool.
+- The allocated amount reduces that pool's remaining future amount automatically.
+- Only the unallocated remainder becomes Misc Daily.
+- Pool spending is retained as a cleared classification record for category reporting without affecting the forecast a second time.
+- The entire balance update + pool allocation + Misc remainder is one atomic action and one Undo operation.
+- Fixed a storage-reference bug where editing an already-manualized month occurrence could appear to save while actually changing only a projected copy. Month-entry edits now resolve back to the stored manual record before mutation.
+- Financial Integrity has been removed from Settings and no longer blocks Update & Reload / Force Refresh.
+- The update guard remains in place to protect stored financial/planning data across app refreshes.
 
-AUDIT FIXES FOUND BEFORE RELEASE
---------------------------------
-The reliability test suite found and fixed two additional logic defects:
+EXAMPLE
+-------
+Prior balance: $4,400
+New bank balance: $4,320
+Bank decrease: $80
+Allocate to Fuel: $60
 
-1. Six-month boundary leak
-   - Older projection logic could include several days from month seven even though Home showed six months.
-   - v0.7.0 stops exactly at the end of current month + next five.
+Result:
+- Fuel remaining $240 -> $180
+- Misc Daily $20
+- Bank balance $4,320
+- If the prior month ending was $700, the corrected month ending becomes $680 (all else equal).
 
-2. Biweekly daylight-saving drift
-   - Fixed-millisecond 14-day increments could shift one hour after DST and omit a payday on the last day of a forecast month.
-   - v0.7.0 uses calendar-day increments and preserves the intended biweekly date.
+FINANCIAL RULE
+--------------
+A spending pool is future money still expected to be spent. If actual bank spending comes from a pool, FlowMap must lower both the actual bank balance and the pool's remaining future amount. That prevents the same $60 from being counted once in the bank balance and again as future Fuel spending.
 
-AUTOMATED RELEASE GATE
-----------------------
-Before packaging v0.7.0, the finance engine passed:
-- 21 deterministic/regression tests
-- 10,000 randomized forecast comparisons against a separate reference oracle
-- 5,000 randomized accounting-invariant checks
-- 15,000 randomized scenarios/states total
-- 0 test failures
-
-The current encrypted FlowMap backup was also tested locally without embedding personal data in the package. Projection and integrity calculations did not mutate the stored state. It produced no integrity failures; one review warning remains for an existing reconciliation entry at or above $500.
-
-See:
-- FINANCIAL_RULES.md
-- RELIABILITY_REPORT.md
-- tests/run-tests.js
+AUTOMATED RELEASE TESTING
+-------------------------
+The release suite remains a development/release gate even though the in-app Financial Integrity panel was removed. See tests/ and RELIABILITY_REPORT.md.
 
 IMPORTANT UPDATE RULE
 ---------------------
 Do not reset, reseed, or re-import your financial data when deploying this update.
 Replace the hosted app files only. FlowMap intentionally keeps the legacy IndexedDB database name (billhub-db) so existing local financial data remains in place.
 
-The update guard is temporary and exists only to validate an app refresh/update. It is deleted after verification and is not the removed automatic snapshot feature.
+No financial schema migration or reseed is performed on startup.
 
 FILES TO DEPLOY
 ---------------
@@ -60,19 +52,19 @@ Upload/replace the contents of the app/ folder at the same GitHub Pages location
 - index.html
 - styles.css
 - app.js
-- finance-engine.js   <-- NEW in v0.7.0
+- finance-engine.js
 - manifest.webmanifest
 - version.json
 - sw.js
 - icons/ folder
 
-If your FlowMap icons are already uploaded correctly, the icons do not need to be replaced for v0.7.0.
+If your FlowMap icons are already uploaded correctly, the icons do not need to be replaced for v0.7.1.
 
 Do not upload PRIVATE_DO_NOT_UPLOAD.
 
 DATA SAFETY
 -----------
-Installing v0.7.0 does not intentionally change:
+Installing v0.7.1 does not intentionally change:
 - current balance checkpoint
 - balance history
 - recurring bills
@@ -84,7 +76,7 @@ Installing v0.7.0 does not intentionally change:
 - goals or savings transfers
 - Minimum Balance setting
 
-No financial schema migration or reseed is performed on startup.
+The new allocation workflow changes data only when you explicitly save a balance update.
 
 BACKUPS
 -------
@@ -92,4 +84,4 @@ FlowMap encrypted backups and legacy Bill Hub encrypted backups remain restorabl
 
 DATA STORAGE
 ------------
-Personal financial data remains local in IndexedDB. No user-specific financial data, backup contents, goals, or passphrases are embedded in the deployable app files or included in the automated synthetic test suite.
+Personal financial data remains local in IndexedDB. No user-specific financial data, backup contents, goals, or passphrases are embedded in the deployable app files or synthetic test suite.
