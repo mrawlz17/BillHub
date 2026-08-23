@@ -244,12 +244,19 @@
   function availableSpendingPools(state){
     const firstMonth=monthKey(checkpointDate(state));
     const seen=new Set();
-    return projectedItems(state,1).filter(x=>{
-      if(x.kind!=='pool'||!isUnresolvedOutflow(x)||cents(x.amount)<=0)return false;
+    return projectedItems(state,1).flatMap(x=>{
+      // The recurring rule is authoritative for whether an occurrence is a
+      // spending pool. Older/current-month overrides may still carry a legacy
+      // kind such as "bill" even after the recurring rule was changed to a
+      // pool. Those occurrences must remain available in balance allocation.
+      const ruleId=x.ruleId||x.overrideRuleId||x.relatedRuleId;
+      const rule=recurringRuleById(state,ruleId);
+      const poolKind=x.kind==='pool'||rule?.kind==='pool';
+      if(!poolKind||!isUnresolvedOutflow(x)||cents(x.amount)<=0)return [];
       const forecastMonth=monthKey(x.forecastDate||x.date);
-      if(forecastMonth!==firstMonth)return false;
-      if(seen.has(x.id))return false;
-      seen.add(x.id);return true;
+      if(forecastMonth!==firstMonth||seen.has(x.id))return [];
+      seen.add(x.id);
+      return [{...x,kind:'pool',poolRuleId:rule?.id||ruleId||null}];
     });
   }
   function clearedSpendingByCategory(state){
@@ -272,7 +279,7 @@
 
 
   return {
-    VERSION:'1.0.2',
+    VERSION:'1.0.3',
     localDate,isoDate,addMonths,safeDay,secondMonday,biweeklyDates,monthKey,cents,fromCents,
     isIncome,isResolved,isUnresolvedOutflow,isUnresolvedIncome,cashDeltaCents,
     genBillOccurrences,genIncomeOccurrences,projectedItems,projection,monthBuckets,dueRecurringOccurrences,

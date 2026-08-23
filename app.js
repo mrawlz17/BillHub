@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.2';
+const APP_VERSION='0.7.3';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -802,7 +802,7 @@ function renderBalanceAllocationInputs(diff){
  const decrease=Math.abs(diff);
  box.classList.remove('hidden');
  box.innerHTML=`<div class="pool-allocation-head"><strong>Allocate this decrease</strong><span>${money(decrease)} bank decrease</span></div>
-   <div class="pool-allocation-help">If some of this spending came from Fuel, Groceries, or another active spending pool, enter it here. FlowMap will reduce that pool automatically. Anything left becomes Misc Daily.</div>
+   <div class="pool-allocation-help">All active spending pools for this month are listed below. Enter any part of the bank decrease that came from a pool and FlowMap will reduce it automatically. Anything left becomes Misc Daily.</div>
    <div class="pool-allocation-list">${pools.map(pool=>`
      <div class="pool-allocation-row">
        <div class="pool-allocation-name"><strong>${escapeHTML(poolShortName(pool))}</strong><span>${escapeHTML(pool.name)} · ${money(pool.amount)} remaining</span></div>
