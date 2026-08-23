@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.1';
+const APP_VERSION='0.7.2';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -205,7 +205,7 @@ function materializeDueRecurringItems(cutoffISO){
  if(!due.length)return 0;
  const manuals=state.manualItems||[];
  for(const x of due){
-   const m={...x,id:uid(),generated:false,overrideRuleId:x.ruleId,overrideRuleName:x.name,overrideMonth:x.date.slice(0,7),reconciled:false,materializedDueAt:nowISO()};
+   const m={...x,id:uid(),generated:false,overrideRuleId:x.ruleId,overrideRuleName:x.name,overrideMonth:x.date.slice(0,7),overrideOccurrenceDate:x.date,reconciled:false,materializedDueAt:nowISO()};
    delete m.ruleId;
    manuals.push(m);
  }
@@ -617,11 +617,19 @@ function recurringRuleForItem(item){
  return item.type==='income' ? state.incomeRules.find(x=>x.id===id) : state.bills.find(x=>x.id===id);
 }
 function findProjectedItem(id){return projectedItems(FORECAST_MONTHS).find(x=>x.id===id)||(state.manualItems||[]).find(x=>x.id===id)}
-function findMonthOverride(item){
+function findOccurrenceOverride(item){
  const rid=item.ruleId||item.overrideRuleId;
  if(!rid) return null;
+ const rule=recurringRuleForItem(item);
+ const multi=!!rule&&['biweekly','twice_monthly'].includes(rule.schedule);
  const month=item.overrideMonth||item.date.slice(0,7);
- return (state.manualItems||[]).find(x=>x.overrideRuleId===rid&&(x.overrideMonth||x.date.slice(0,7))===month)||null;
+ return (state.manualItems||[]).find(x=>{
+   if(x.overrideRuleId!==rid)return false;
+   const sourceDate=x.overrideOccurrenceDate||x.originalOccurrenceDate||x.date;
+   if(sourceDate===item.date)return true;
+   // Legacy month-only matching remains only for one-occurrence-per-month rules.
+   return !multi&&(x.overrideMonth||x.date.slice(0,7))===month;
+ })||null;
 }
 function materializeOccurrence(item){
  if(!item.generated){
@@ -632,9 +640,9 @@ function materializeOccurrence(item){
    if(stored.overrideRuleId&&!stored.overrideMonth)stored.overrideMonth=stored.date.slice(0,7);
    return stored;
  }
- const existing=findMonthOverride(item);
+ const existing=findOccurrenceOverride(item);
  if(existing)return existing;
- const manual={...item,id:uid(),generated:false,overrideRuleId:item.ruleId,overrideRuleName:item.name,overrideMonth:item.date.slice(0,7),reconciled:false};
+ const manual={...item,id:uid(),generated:false,overrideRuleId:item.ruleId,overrideRuleName:item.name,overrideMonth:item.date.slice(0,7),overrideOccurrenceDate:item.date,reconciled:false};
  delete manual.ruleId;
  state.manualItems.push(manual);
  return manual;

@@ -105,12 +105,29 @@
     return out;
   }
 
-  function suppressionSets(manuals){
-    return {
-      exact:new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.date}`)),
-      month:new Set(manuals.filter(x=>x.overrideRuleId).map(x=>`${x.overrideRuleId}|${x.overrideMonth||String(x.date||'').slice(0,7)}`)),
-      nameMonth:new Set(manuals.filter(x=>x.overrideRuleName).map(x=>`${x.overrideRuleName}|${x.overrideMonth||String(x.date||'').slice(0,7)}`))
-    };
+  function recurringRuleById(state,id){
+    if(!id)return null;
+    return (state?.bills||[]).find(x=>x.id===id)||(state?.incomeRules||[]).find(x=>x.id===id)||null;
+  }
+  function hasMultipleOccurrencesPerMonth(rule){
+    return !!rule&&['biweekly','twice_monthly'].includes(rule.schedule);
+  }
+  function suppressionSets(state,manuals){
+    const exact=new Set(),month=new Set(),nameMonth=new Set();
+    for(const x of manuals.filter(x=>x.overrideRuleId)){
+      const rule=recurringRuleById(state,x.overrideRuleId);
+      const sourceDate=x.overrideOccurrenceDate||x.originalOccurrenceDate||x.date;
+      if(sourceDate)exact.add(`${x.overrideRuleId}|${sourceDate}`);
+      // Legacy month-level overrides are safe only for schedules that generate at
+      // most one occurrence per month. Using a month key for biweekly or
+      // twice-monthly rules can accidentally suppress later paychecks/payments.
+      if(!hasMultipleOccurrencesPerMonth(rule)){
+        const mk=x.overrideMonth||String(x.date||'').slice(0,7);
+        if(mk)month.add(`${x.overrideRuleId}|${mk}`);
+        if(x.overrideRuleName&&mk)nameMonth.add(`${x.overrideRuleName}|${mk}`);
+      }
+    }
+    return {exact,month,nameMonth};
   }
   function suppressesGenerated(x,s){
     const mk=String(x.date||'').slice(0,7);
@@ -130,7 +147,7 @@
     const extras=(additionalItems||[]).filter(x=>{
       if(!x?.date)return false;const dt=localDate(x.date);return dt>=start&&dt<=end;
     });
-    const suppress=suppressionSets(manuals);
+    const suppress=suppressionSets(state,manuals);
     generated=generated.filter(x=>!suppressesGenerated(x,suppress));
     return [...generated,...manuals,...extras].sort((a,b)=>{
       const ad=a.forecastDate||a.date,bd=b.forecastDate||b.date;
@@ -190,7 +207,7 @@
     if(!(cutoff>start))return [];
     const end=new Date(cutoff);end.setHours(23,59,59,999);
     let generated=[...genBillOccurrences(state,start,end),...(includeIncome?genIncomeOccurrences(state,start,end):[])].filter(x=>x.date<cutoffISO);
-    const manuals=state?.manualItems||[],s=suppressionSets(manuals);
+    const manuals=state?.manualItems||[],s=suppressionSets(state,manuals);
     return generated.filter(x=>!suppressesGenerated(x,s));
   }
 
@@ -255,7 +272,7 @@
 
 
   return {
-    VERSION:'1.0.1',
+    VERSION:'1.0.2',
     localDate,isoDate,addMonths,safeDay,secondMonday,biweeklyDates,monthKey,cents,fromCents,
     isIncome,isResolved,isUnresolvedOutflow,isUnresolvedIncome,cashDeltaCents,
     genBillOccurrences,genIncomeOccurrences,projectedItems,projection,monthBuckets,dueRecurringOccurrences,

@@ -1,87 +1,45 @@
-FlowMap v0.7.1
+FlowMap v0.7.2
 ================
 
-FlowMap is a private, local-first cash-flow planner. The actual cleared bank balance remains the source of truth. Known income, bills, spending pools, extras, catch-ups, savings transfers, and unresolved overdue items are projected forward from that checkpoint.
-
-THIS RELEASE: BALANCE ALLOCATION FIX
-------------------------------------
-v0.7.1 fixes the daily balance workflow for Fuel/Groceries spending pools and removes the user-facing Financial Integrity panel from Settings.
-
-Key changes:
-- When a bank balance decreases, FlowMap now offers active current-month spending pools in the same balance-update dialog.
-- You can allocate part of the bank decrease to Fuel, Groceries, or another active pool.
-- The allocated amount reduces that pool's remaining future amount automatically.
-- Only the unallocated remainder becomes Misc Daily.
-- Pool spending is retained as a cleared classification record for category reporting without affecting the forecast a second time.
-- The entire balance update + pool allocation + Misc remainder is one atomic action and one Undo operation.
-- Fixed a storage-reference bug where editing an already-manualized month occurrence could appear to save while actually changing only a projected copy. Month-entry edits now resolve back to the stored manual record before mutation.
-- Financial Integrity has been removed from Settings and no longer blocks Update & Reload / Force Refresh.
-- The update guard remains in place to protect stored financial/planning data across app refreshes.
-
-EXAMPLE
+PURPOSE
 -------
-Prior balance: $4,400
-New bank balance: $4,320
-Bank decrease: $80
-Allocate to Fuel: $60
+FlowMap is a local-first cash-flow planner. Your actual bank balance is the source of truth. Personal financial data remains in local browser storage and is not included in these release files.
 
-Result:
-- Fuel remaining $240 -> $180
-- Misc Daily $20
-- Bank balance $4,320
-- If the prior month ending was $700, the corrected month ending becomes $680 (all else equal).
+WHAT CHANGED IN v0.7.2
+----------------------
+- Fixed occurrence matching for recurring schedules that can happen more than once in the same month.
+- Editing, preserving, receiving, skipping, or moving one biweekly/twice-monthly occurrence no longer suppresses the other occurrences in that month.
+- Each materialized recurring occurrence now carries its original occurrence date so a date change suppresses only the occurrence it replaced.
+- Monthly recurring bills keep their existing one-month-only override behavior.
+- No financial-data migration or automatic record rewrite is performed by this update.
 
-FINANCIAL RULE
+WHY THIS MATTERS
+----------------
+A September 4 Midcon occurrence can now be preserved or edited without removing September 18 from the forecast.
+Likewise, a September 10 CSS occurrence can be preserved or edited without removing September 25.
+
+UPDATE PACKAGE
 --------------
-A spending pool is future money still expected to be spent. If actual bank spending comes from a pool, FlowMap must lower both the actual bank balance and the pool's remaining future amount. That prevents the same $60 from being counted once in the bank balance and again as future Fuel spending.
+For an existing FlowMap installation, replace only the files included in the Update package.
 
-AUTOMATED RELEASE TESTING
--------------------------
-The release suite remains a development/release gate even though the in-app Financial Integrity panel was removed. See tests/ and RELIABILITY_REPORT.md.
-
-IMPORTANT UPDATE RULE
----------------------
-Do not reset, reseed, or re-import your financial data when deploying this update.
-Replace the hosted app files only. FlowMap intentionally keeps the legacy IndexedDB database name (billhub-db) so existing local financial data remains in place.
-
-No financial schema migration or reseed is performed on startup.
-
-FILES TO DEPLOY
----------------
-Upload/replace the contents of the app/ folder at the same GitHub Pages location used by the existing app:
-- index.html
-- styles.css
+For v0.7.2 those files are:
 - app.js
 - finance-engine.js
-- manifest.webmanifest
-- version.json
+- index.html
 - sw.js
-- icons/ folder
+- version.json
+- README.txt
 
-If your FlowMap icons are already uploaded correctly, the icons do not need to be replaced for v0.7.1.
+Do not reset FlowMap, delete browser data, reseed the app, or restore a backup just to install this update.
 
-Do not upload PRIVATE_DO_NOT_UPLOAD.
+FULL GITHUB PACKAGE
+-------------------
+The GitHub Files package contains the complete deployable app plus this README.
 
 DATA SAFETY
 -----------
-Installing v0.7.1 does not intentionally change:
-- current balance checkpoint
-- balance history
-- recurring bills
-- income schedules
-- manual entries
-- month overrides
-- existing extras/catch-ups
-- existing one-time/manual occurrences
-- goals or savings transfers
-- Minimum Balance setting
-
-The new allocation workflow changes data only when you explicitly save a balance update.
+Installing v0.7.2 does not intentionally rewrite your existing current balance, balance history, recurring rules, manual entries, statuses, overrides, goals, or planning settings.
 
 BACKUPS
 -------
-FlowMap encrypted backups and legacy Bill Hub encrypted backups remain restorable.
-
-DATA STORAGE
-------------
-Personal financial data remains local in IndexedDB. No user-specific financial data, backup contents, goals, or passphrases are embedded in the deployable app files or synthetic test suite.
+Encrypted FlowMap backups remain compatible. Keep a current manual backup before replacing hosted app files.
