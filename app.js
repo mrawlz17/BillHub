@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.3';
+const APP_VERSION='0.7.4';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -488,7 +488,7 @@ function renderPlan(){
  $('billsList').innerHTML=sortedBills.length?sortedBills.map(b=>`
   <div class="list-row" data-rule-id="${b.id}">
    <div>${b.schedule==='monthly_day'?`${b.day}${ordinal(b.day)}`:b.schedule==='biweekly'?'2 weeks':'2nd Mon'}</div>
-   <div><strong>${b.name}</strong><div class="muted small">${b.category} · ${b.kind==='pool'?'Spending pool':'Recurring bill'}</div></div>
+   <div><strong>${escapeHTML(b.name)}</strong><div class="muted small">${escapeHTML(b.category)} · ${b.kind==='pool'?'Spending pool':'Recurring bill'}</div>${b.paymentUrl?`<a class="bill-site-link" href="${escapeHTML(b.paymentUrl)}" target="_blank" rel="noopener noreferrer" data-bill-site>Open Website ↗</a>`:''}</div>
    <div class="amt">${money(b.amount)}</div>
   </div>`).join(''):'<p class="muted">No recurring bills yet.</p>';
  $('incomeList').innerHTML=state.incomeRules.length?state.incomeRules.map(r=>`
@@ -498,6 +498,7 @@ function renderPlan(){
    <div class="amt">${money(r.amount)}</div>
   </div>`).join(''):'<p class="muted">No income sources yet.</p>';
  document.querySelectorAll('[data-rule-id]').forEach(el=>el.addEventListener('click',()=>openRuleDialog(el.dataset.ruleId)));
+ document.querySelectorAll('[data-bill-site]').forEach(el=>el.addEventListener('click',e=>e.stopPropagation()));
  document.querySelectorAll('[data-income-id]').forEach(el=>el.addEventListener('click',()=>openIncomeDialog(el.dataset.incomeId)));
 }
 function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return (s[(v-20)%10]||s[v]||s[0])}
@@ -995,8 +996,8 @@ function openRuleDialog(id=null){
  if(r){
    $('ruleName').value=r.name;$('ruleAmount').value=r.amount;$('ruleCategory').value=r.category||'Other';
    $('ruleKind').value=r.kind||'bill';$('ruleSchedule').value=r.schedule||'monthly_day';
-   $('ruleDay').value=r.day||'';$('ruleAnchor').value=r.anchor||'';
- }else{$('ruleSchedule').value='monthly_day';}
+   $('ruleDay').value=r.day||'';$('ruleAnchor').value=r.anchor||'';$('rulePaymentUrl').value=r.paymentUrl||'';
+ }else{$('ruleSchedule').value='monthly_day';$('rulePaymentUrl').value='';}
  toggleRuleFields();$('ruleDialog').showModal();focusDialogTitle('ruleDialogTitle');
 }
 $('ruleSchedule').addEventListener('change',toggleRuleFields);
@@ -1005,9 +1006,21 @@ function toggleRuleFields(){
  $('dayField').classList.toggle('hidden',s!=='monthly_day');
  $('anchorField').classList.toggle('hidden',s!=='biweekly');
 }
+function normalizePaymentUrl(raw){
+ const value=String(raw||'').trim();
+ if(!value)return '';
+ const candidate=/^[a-z][a-z0-9+.-]*:\/\//i.test(value)?value:`https://${value}`;
+ try{
+   const url=new URL(candidate);
+   if(url.protocol!=='https:'||!url.hostname)throw new Error('invalid');
+   return url.href;
+ }catch{return null}
+}
 $('ruleForm').addEventListener('submit',async e=>{
  e.preventDefault();
- const values={name:$('ruleName').value.trim(),amount:+$('ruleAmount').value,category:$('ruleCategory').value,kind:$('ruleKind').value,schedule:$('ruleSchedule').value,day:+$('ruleDay').value||null,anchor:$('ruleAnchor').value||null,active:true};
+ const paymentUrl=normalizePaymentUrl($('rulePaymentUrl').value);
+ if(paymentUrl===null){alert('Enter a secure HTTPS website, or leave Payment Website blank.');return}
+ const values={name:$('ruleName').value.trim(),amount:+$('ruleAmount').value,category:$('ruleCategory').value,kind:$('ruleKind').value,schedule:$('ruleSchedule').value,day:+$('ruleDay').value||null,anchor:$('ruleAnchor').value||null,paymentUrl,active:true};
  const label=editingRuleId?'Recurring bill updated':'Recurring bill added';
  await commitAction(label,values.name,async()=>{
    if(editingRuleId){const r=state.bills.find(x=>x.id===editingRuleId);if(r)Object.assign(r,values)}

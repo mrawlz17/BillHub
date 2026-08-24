@@ -1266,3 +1266,17 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
   .pool-allocation-row{grid-template-columns:1fr}
   .pool-allocation-row input{text-align:left}
 }
+
+
+/* ---------- Plan bill website links ---------- */
+.bill-site-link{
+  display:inline-flex;
+  align-items:center;
+  margin-top:5px;
+  color:var(--info);
+  font-size:12px;
+  font-weight:800;
+  text-decoration:none;
+}
+.bill-site-link:hover,.bill-site-link:focus-visible{text-decoration:underline}
+.rule-url-note{margin-top:5px}

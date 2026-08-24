@@ -1,37 +1,29 @@
-FlowMap v0.7.3
+FlowMap v0.7.4
 ================
 
-PURPOSE
+Purpose
 -------
-FlowMap is a local-first cash-flow planner. Your actual bank balance is the source of truth. Personal financial data remains in local browser storage and is not included in these release files.
+Adds optional external payment website links for recurring bills and spending pools.
 
-WHAT CHANGED IN v0.7.3
-----------------------
-- Update Balance now recognizes every active current-month spending pool from its recurring rule, even when an older month-specific occurrence still carries a legacy type such as "bill".
-- This fixes Apple/subscription spending pools not appearing beside Fuel and Groceries in the balance-allocation screen.
-- The change does not alter the forecast, balances, statuses, or stored financial records by itself.
-- No financial-data migration or automatic record rewrite is performed.
+What changed
+------------
+- Plan -> Bills & Income recurring items now have an optional Payment Website field.
+- Saved links appear as "Open Website" only in Plan -> Bills & Income.
+- Tapping the link opens the secure HTTPS site in a new external browser context.
+- Payment links do not mark an item Pending, Cleared, or Paid. FlowMap status remains manual.
+- Payment website metadata is not used by the finance/forecast engine.
 
-UPDATE PACKAGE
+Safety
+------
+- No database migration.
+- No financial records are rewritten during the app update.
+- No usernames, passwords, account numbers, or banking credentials should be stored in FlowMap.
+- Only HTTPS payment websites are accepted.
+
+UPDATE INSTALL
 --------------
-For an existing FlowMap installation, replace only the files included in the Update package:
-- app.js
-- finance-engine.js
-- index.html
-- sw.js
-- version.json
-- README.txt
+If updating from FlowMap v0.7.3, replace the app files included in the Update ZIP in the root of the GitHub Pages repository. Do not delete or reset browser data.
 
-Do not reset FlowMap, delete browser data, reseed the app, or restore a backup just to install this update.
-
-FULL GITHUB PACKAGE
--------------------
-The GitHub Files package contains the complete deployable app plus this README.
-
-DATA SAFETY
------------
-Installing v0.7.3 does not intentionally rewrite your existing current balance, balance history, recurring rules, manual entries, statuses, overrides, goals, or planning settings.
-
-BACKUPS
--------
-Encrypted FlowMap backups remain compatible. Keep a current manual backup before replacing hosted app files.
+FULL GITHUB FILES
+-----------------
+The GitHub Files ZIP contains the complete deployable FlowMap app.
