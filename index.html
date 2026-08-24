@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=0.7.4" />
+  <link rel="stylesheet" href="styles.css?v=0.7.5" />
 </head>
 <body>
   <header class="topbar">
@@ -76,12 +76,42 @@
 
     <section id="planView" class="hidden">
       <div class="plan-tabs" role="tablist" aria-label="Plan sections">
-        <button type="button" class="plan-tab active" data-plan-pane="goalsPane" role="tab" aria-selected="true">Goals</button>
+        <button type="button" class="plan-tab active" data-plan-pane="auditPane" role="tab" aria-selected="true">Audit</button>
+        <button type="button" class="plan-tab" data-plan-pane="goalsPane" role="tab" aria-selected="false">Goals</button>
         <button type="button" class="plan-tab" data-plan-pane="whatIfPane" role="tab" aria-selected="false">What If</button>
         <button type="button" class="plan-tab" data-plan-pane="rulesPane" role="tab" aria-selected="false">Bills & Income</button>
       </div>
 
-      <div id="goalsPane" class="plan-pane">
+      <div id="auditPane" class="plan-pane">
+        <article class="panel audit-panel">
+          <div class="panel-head audit-head">
+            <div>
+              <h2>Financial Audit</h2>
+              <p class="muted small">Read-only view of what the production forecast engine is accounting for.</p>
+            </div>
+            <label class="audit-month-label">Month
+              <select id="auditMonthSelect" aria-label="Audit month"></select>
+            </label>
+          </div>
+          <div class="audit-readonly"><span class="audit-lock">READ ONLY</span><span>This screen cannot edit, save, clear, skip, or create financial records.</span></div>
+          <div id="auditMath"></div>
+          <div id="auditCoverage"></div>
+          <div class="audit-section">
+            <div class="audit-section-head"><h3>Recurring Bills</h3><span id="auditBillsCount" class="muted small"></span></div>
+            <div id="auditBillsList" class="audit-list"></div>
+          </div>
+          <div class="audit-section">
+            <div class="audit-section-head"><h3>Expected Income</h3><span id="auditIncomeCount" class="muted small"></span></div>
+            <div id="auditIncomeList" class="audit-list"></div>
+          </div>
+          <div class="audit-section">
+            <div class="audit-section-head"><h3>Additional Forecast Items</h3><span id="auditExtrasCount" class="muted small"></span></div>
+            <div id="auditExtrasList" class="audit-list"></div>
+          </div>
+        </article>
+      </div>
+
+      <div id="goalsPane" class="plan-pane hidden">
         <article class="panel">
           <div class="panel-head">
             <div>
@@ -196,7 +226,7 @@
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.7.4</strong>
+            <strong id="appVersion">v0.7.5</strong>
           </div>
           <div class="update-status-wrap">
             <span id="updateStatus" class="update-pill">Checking…</span>
@@ -435,7 +465,7 @@
     </div>
   </dialog>
 
-  <script src="finance-engine.js?v=0.7.4"></script>
-  <script src="app.js?v=0.7.4"></script>
+  <script src="finance-engine.js?v=0.7.5"></script>
+  <script src="app.js?v=0.7.5"></script>
 </body>
 </html>

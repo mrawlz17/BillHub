@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.4';
+const APP_VERSION='0.7.5';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -7,7 +7,7 @@ const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
 let activeItem=null, editingRuleId=null, editingIncomeId=null, extraRelatedRuleId=null;
 let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null, openFutureMonthKey=null;
-let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='goalsPane', whatIfScenario=null;
+let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='auditPane', auditMonthKey=null, whatIfScenario=null;
 let updateGuardNotice=null;
 let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
 let balanceAllocationDraft={};
@@ -474,12 +474,135 @@ function renderDashboard(){
    el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle()}});
  });
 }
+function auditMonthRange(key){
+ const [year,month]=key.split('-').map(Number);
+ return {start:new Date(year,month-1,1,0,0,0,0),end:new Date(year,month,0,23,59,59,999)};
+}
+function auditRuleForOccurrence(x){
+ return x.type==='income'
+   ?(state.incomeRules||[]).find(r=>r.id===x.ruleId)
+   :(state.bills||[]).find(r=>r.id===x.ruleId);
+}
+function auditHasMultipleOccurrences(rule){return !!rule&&['biweekly','twice_monthly'].includes(rule.schedule)}
+function auditOverrideFor(expected){
+ const rule=auditRuleForOccurrence(expected),month=expected.date.slice(0,7);
+ const candidates=(state.manualItems||[]).filter(x=>x.overrideRuleId===expected.ruleId);
+ const exact=candidates.find(x=>(x.overrideOccurrenceDate||x.originalOccurrenceDate||x.date)===expected.date);
+ if(exact)return exact;
+ if(!auditHasMultipleOccurrences(rule))return candidates.find(x=>(x.overrideMonth||String(x.date||'').slice(0,7))===month)||null;
+ return null;
+}
+function auditProjectedOccurrence(expected,rows){
+ return rows.find(x=>x.id===expected.id)||rows.find(x=>{
+   const source=x.overrideOccurrenceDate||x.originalOccurrenceDate||x.date;
+   return x.overrideRuleId===expected.ruleId&&source===expected.date;
+ })||null;
+}
+function auditOccurrenceRow(expected,checkpointISO,projectedRows){
+ const override=auditOverrideFor(expected),projected=auditProjectedOccurrence(expected,projectedRows);
+ const rule=auditRuleForOccurrence(expected);
+ let effective=override||projected||expected,status='Upcoming',statusClass='upcoming',accounted=true,note='';
+ if(override){
+   if(override.status==='skipped'){status='Skipped';statusClass='skipped'}
+   else if(override.status==='pending'){status='Pending';statusClass='pending'}
+   else if(override.status==='cleared'){status='Cleared';statusClass='cleared'}
+   else if(override.status==='received'){status='Received';statusClass='received'}
+   else {status='Upcoming';statusClass='upcoming'}
+   if(override.date!==expected.date&&override.status!=='skipped')note=`Moved to ${dstr(override.date)}`;
+   if(Math.abs((+override.amount||0)-(+expected.amount||0))>=0.005)note=[note,`Rule ${money(expected.amount)}`].filter(Boolean).join(' · ');
+ }else if(expected.date<checkpointISO){
+   status='In checkpoint';statusClass='checkpoint';effective=expected;
+   note='Older than the current bank-balance checkpoint. This audit does not independently prove its historical payment status.';
+ }else if(projected){
+   status=projected.status==='pending'?'Pending':'Upcoming';statusClass=projected.status==='pending'?'pending':'upcoming';effective=projected;
+ }else{
+   status='Missing';statusClass='missing';accounted=false;effective=expected;
+   note='Expected by the recurring rule but not represented in the current projection.';
+ }
+ return {expected,effective,rule,status,statusClass,accounted,note};
+}
+function auditRowHTML(row){
+ const x=row.effective,expected=row.expected;
+ const amount=(row.status==='Skipped')?0:(+x.amount||0);
+ const dateText=x.date!==expected.date&&row.status!=='Skipped'
+   ?`${localDate(expected.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})} → ${localDate(x.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}`
+   :localDate(expected.date).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+ const detail=row.rule
+   ?`${escapeHTML(expected.category||row.rule.category||'')}${expected.type==='expense'?` · ${row.rule.kind==='pool'?'Spending pool':'Recurring bill'}`:''}`
+   :escapeHTML(expected.category||'');
+ return `<div class="audit-row ${row.statusClass}">
+   <div class="audit-date">${dateText}</div>
+   <div class="audit-main"><strong>${escapeHTML(expected.name)}</strong><div class="muted small">${detail}</div>${row.note?`<div class="audit-note">${escapeHTML(row.note)}</div>`:''}</div>
+   <div class="audit-right"><strong class="${expected.type==='income'?'positive':''}">${expected.type==='income'?'+':'-'}${money(amount)}</strong><span class="audit-status ${row.statusClass}">${row.status}</span></div>
+ </div>`;
+}
+function auditExtraRowHTML(x){
+ const status=x.status==='pending'?'Pending':x.status==='received'?'Received':x.status==='cleared'?'Cleared':x.status==='skipped'?'Skipped':'Upcoming';
+ const cls=String(x.status||'upcoming').toLowerCase();
+ return `<div class="audit-row ${cls}">
+   <div class="audit-date">${localDate(x.forecastDate||x.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+   <div class="audit-main"><strong>${escapeHTML(x.name||'Item')}</strong><div class="muted small">${escapeHTML(x.category||'Other')} · ${escapeHTML((x.kind||'one-time').replaceAll('_',' '))}</div></div>
+   <div class="audit-right"><strong class="${x.type==='income'?'positive':''}">${x.type==='income'?'+':'-'}${money(x.amount)}</strong><span class="audit-status ${cls}">${status}</span></div>
+ </div>`;
+}
+function renderAudit(){
+ const buckets=monthBuckets(FORECAST_MONTHS);
+ if(!buckets.length)return;
+ if(!auditMonthKey||!buckets.some(m=>m.key===auditMonthKey))auditMonthKey=buckets[0].key;
+ const select=$('auditMonthSelect');
+ select.innerHTML=buckets.map(m=>`<option value="${m.key}" ${m.key===auditMonthKey?'selected':''}>${m.longLabel}</option>`).join('');
+ const m=buckets.find(x=>x.key===auditMonthKey)||buckets[0],first=m.key===buckets[0].key;
+ const pending=m.items.filter(x=>x.type!=='income'&&x.status==='pending').reduce((sum,x)=>sum+Math.abs(+x.amount||0),0);
+ const remaining=m.items.filter(x=>x.type!=='income'&&x.status!=='pending').reduce((sum,x)=>sum+Math.abs(+x.amount||0),0);
+ const tie=Math.round((m.opening+m.income-m.expenses)*100)===Math.round(m.ending*100);
+ $('auditMath').innerHTML=`<div class="audit-math-grid">
+   <div><span>${first?'Current balance':'Starting balance'}</span><strong>${money(m.opening)}</strong></div>
+   <div><span>Income</span><strong class="positive">+${money(m.income)}</strong></div>
+   <div><span>Outflow</span><strong>-${money(m.expenses)}</strong></div>
+   <div><span>Ending</span><strong class="${m.ending<0?'negative':''}">${money(m.ending)}</strong></div>
+ </div>
+ <div class="audit-outflow-grid"><div><span>Pending</span><strong>${money(pending)}</strong></div><div><span>Upcoming / remaining</span><strong>${money(remaining)}</strong></div><div><span>Total future outflow</span><strong>${money(m.expenses)}</strong></div></div>
+ <div class="audit-equation ${tie?'ok':'bad'}"><strong>${money(m.opening)} + ${money(m.income)} − ${money(m.expenses)} = ${money(m.ending)}</strong><span>${tie?'TIES OUT ✓':'DOES NOT TIE OUT'}</span></div>`;
+
+ const {start,end}=auditMonthRange(m.key),checkpointISO=state.balance.updatedAt?isoDate(new Date(state.balance.updatedAt)):todayISO();
+ const expectedBills=Finance.genBillOccurrences(state,start,end),expectedIncome=Finance.genIncomeOccurrences(state,start,end);
+ const projectedRows=projectedItems(FORECAST_MONTHS);
+ const billRows=expectedBills.map(x=>auditOccurrenceRow(x,checkpointISO,projectedRows));
+ const incomeRows=expectedIncome.map(x=>auditOccurrenceRow(x,checkpointISO,projectedRows));
+ const allRows=[...billRows,...incomeRows],missing=allRows.filter(x=>!x.accounted),checkpointOnly=allRows.filter(x=>x.status==='In checkpoint');
+ const accounted=allRows.length-missing.length;
+ const coverageOK=missing.length===0&&tie;
+ $('auditCoverage').innerHTML=`<div class="audit-coverage ${coverageOK?'ok':'warn'}">
+   <div><span>Known recurring coverage</span><strong>${accounted} / ${allRows.length}</strong></div>
+   <div><span>Unexplained missing</span><strong>${missing.length}</strong></div>
+   <div><span>Checkpoint history</span><strong>${checkpointOnly.length}</strong></div>
+   <div><span>Forecast tie-out</span><strong>${tie?'PASS':'FAIL'}</strong></div>
+   <p>${coverageOK?'Every occurrence generated by your active FlowMap rules is represented. Rows marked In checkpoint are older than the current bank-balance checkpoint; they are outside the live forecast and are not an independent proof that the historical bill was paid.':'Review the highlighted audit rows before relying on this month.'}</p>
+ </div>`;
+ $('auditBillsCount').textContent=`${billRows.filter(x=>x.accounted).length}/${billRows.length} accounted`;
+ $('auditIncomeCount').textContent=`${incomeRows.filter(x=>x.accounted).length}/${incomeRows.length} accounted`;
+ $('auditBillsList').innerHTML=billRows.length?billRows.map(auditRowHTML).join(''):'<div class="empty-planning">No recurring bill occurrences this month.</div>';
+ $('auditIncomeList').innerHTML=incomeRows.length?incomeRows.map(auditRowHTML).join(''):'<div class="empty-planning">No expected income occurrences this month.</div>';
+
+ const recurringIds=new Set([...expectedBills,...expectedIncome].map(x=>x.id));
+ const recurringRuleIds=new Set([...expectedBills,...expectedIncome].map(x=>x.ruleId));
+ const extras=m.items.filter(x=>{
+   if(recurringIds.has(x.id))return false;
+   const rid=x.ruleId||x.overrideRuleId||x.relatedRuleId;
+   if(rid&&recurringRuleIds.has(rid))return false;
+   return true;
+ });
+ $('auditExtrasCount').textContent=`${extras.length} item${extras.length===1?'':'s'}`;
+ $('auditExtrasList').innerHTML=extras.length?extras.map(auditExtraRowHTML).join(''):'<div class="empty-planning">No additional forecast items this month.</div>';
+}
+
 function renderPlan(){
  document.querySelectorAll('.plan-tab').forEach(b=>{
    const active=b.dataset.planPane===currentPlanPane;
    b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));
  });
  document.querySelectorAll('.plan-pane').forEach(p=>p.classList.toggle('hidden',p.id!==currentPlanPane));
+ if(currentPlanPane==='auditPane')renderAudit();
  renderGoals();renderWhatIf();
  const sortedBills=[...state.bills].sort((a,b)=>{
    const rank=x=>x.schedule==='monthly_day'?(x.day||99):x.schedule==='second_monday'?8:50;
@@ -574,8 +697,12 @@ document.querySelectorAll('.bottomnav button').forEach(b=>b.addEventListener('cl
 }));
 
 document.querySelectorAll('.plan-tab').forEach(b=>b.addEventListener('click',()=>{
- currentPlanPane=b.dataset.planPane||'goalsPane';renderPlan();
+ currentPlanPane=b.dataset.planPane||'auditPane';renderPlan();
 }));
+
+$('auditMonthSelect').addEventListener('change',()=>{
+ auditMonthKey=$('auditMonthSelect').value;renderAudit();
+});
 
 $('whatIfForm').addEventListener('submit',e=>{
  e.preventDefault();
