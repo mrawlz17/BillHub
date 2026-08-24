@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.5';
+const APP_VERSION='0.7.6';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
@@ -588,8 +588,11 @@ function renderAudit(){
  const recurringRuleIds=new Set([...expectedBills,...expectedIncome].map(x=>x.ruleId));
  const extras=m.items.filter(x=>{
    if(recurringIds.has(x.id))return false;
-   const rid=x.ruleId||x.overrideRuleId||x.relatedRuleId;
-   if(rid&&recurringRuleIds.has(rid))return false;
+   // Only true recurring occurrences/overrides belong in the recurring sections.
+   // Catch-up/extra items intentionally use relatedRuleId to identify their source
+   // bill, but they are separate cash outflows and must remain visible here.
+   if(x.ruleId&&recurringRuleIds.has(x.ruleId))return false;
+   if(x.overrideRuleId&&recurringRuleIds.has(x.overrideRuleId))return false;
    return true;
  });
  $('auditExtrasCount').textContent=`${extras.length} item${extras.length===1?'':'s'}`;
