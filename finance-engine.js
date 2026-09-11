@@ -137,7 +137,8 @@
   function projectedItems(state,months=6,additionalItems=[]){
     const start=checkpointDate(state),end=forecastEnd(start,months);
     let generated=[...genBillOccurrences(state,start,end),...genIncomeOccurrences(state,start,end)];
-    const manuals=(state?.manualItems||[]).flatMap(x=>{
+    const allManuals=state?.manualItems||[];
+    const manuals=allManuals.flatMap(x=>{
       if(!x?.date)return [];
       const dt=localDate(x.date);
       const carry=(isUnresolvedOutflow(x)||isUnresolvedIncome(x))&&dt<start;
@@ -147,7 +148,10 @@
     const extras=(additionalItems||[]).filter(x=>{
       if(!x?.date)return false;const dt=localDate(x.date);return dt>=start&&dt<=end;
     });
-    const suppress=suppressionSets(state,manuals);
+    // Suppression is semantic, not display-scoped. A resolved skip/override must
+    // continue suppressing its generated occurrence even after its own date is
+    // behind the current balance checkpoint.
+    const suppress=suppressionSets(state,allManuals);
     generated=generated.filter(x=>!suppressesGenerated(x,suppress));
     return [...generated,...manuals,...extras].sort((a,b)=>{
       const ad=a.forecastDate||a.date,bd=b.forecastDate||b.date;
@@ -279,7 +283,7 @@
 
 
   return {
-    VERSION:'1.0.3',
+    VERSION:'1.0.4',
     localDate,isoDate,addMonths,safeDay,secondMonday,biweeklyDates,monthKey,cents,fromCents,
     isIncome,isResolved,isUnresolvedOutflow,isUnresolvedIncome,cashDeltaCents,
     genBillOccurrences,genIncomeOccurrences,projectedItems,projection,monthBuckets,dueRecurringOccurrences,

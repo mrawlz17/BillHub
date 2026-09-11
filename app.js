@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.6';
+const APP_VERSION='0.7.7';
 const DATA_SCHEMA_VERSION=1;
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
