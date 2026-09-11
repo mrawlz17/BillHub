@@ -1,4 +1,6 @@
 {
-  "version": "0.7.7",
-  "released": "2026-09-11"
+  "version": "0.7.8",
+  "released": "2026-09-11",
+  "engineVersion": "1.0.4",
+  "engineFile": "finance-engine-1.0.4.js"
 }

@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=0.7.7" />
+  <link rel="stylesheet" href="styles.css?v=0.7.8" />
 </head>
 <body>
   <header class="topbar">
@@ -20,6 +20,12 @@
   </header>
 
   <main id="app">
+    <section id="startupBlockView" class="panel hidden">
+      <h2 id="startupBlockTitle">FlowMap stopped safely</h2>
+      <p id="startupBlockDetail" class="muted">FlowMap did not start because its finance engine could not be verified.</p>
+      <button id="startupRepairBtn" type="button">Repair App Files</button>
+      <p class="muted small">This refreshes only FlowMap app files and service-worker caches. It does not delete, reset, restore, or rewrite your financial data.</p>
+    </section>
     <section id="setupView" class="panel hidden">
       <h2>Set up FlowMap</h2>
       <p class="muted">Restore a backup, import private data, or start blank.</p>
@@ -226,12 +232,15 @@
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.7.7</strong>
+            <strong id="appVersion">v0.7.8</strong>
+            <div class="muted small" style="margin-top:6px">Finance engine</div>
+            <strong id="engineVersion">v1.0.4 · Verifying…</strong>
           </div>
           <div class="update-status-wrap">
             <span id="updateStatus" class="update-pill">Checking…</span>
           </div>
         </div>
+        <p id="engineDetail" class="muted small">FlowMap verifies the finance engine before loading financial data.</p>
         <p id="updateDetail" class="muted small">FlowMap checks for a newer version. Financial data is protected during updates.</p>
         <div class="button-grid update-buttons">
           <button id="checkUpdateBtn" class="secondary">Check Update</button>
@@ -465,7 +474,7 @@
     </div>
   </dialog>
 
-  <script src="finance-engine.js?v=0.7.7"></script>
-  <script src="app.js?v=0.7.7"></script>
+  <script id="financeEngineScript" src="finance-engine-1.0.4.js" integrity="sha256-dcCgiea0oWSZJ/JiT9rk5TrBigbvIlWNGK6csbFdZFY="></script>
+  <script src="app.js?v=0.7.8"></script>
 </body>
 </html>

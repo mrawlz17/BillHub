@@ -1,7 +1,10 @@
-const APP_VERSION='0.7.7';
+const APP_VERSION='0.7.8';
 const DATA_SCHEMA_VERSION=1;
+const REQUIRED_FINANCE_ENGINE_VERSION='1.0.4';
+const FINANCE_ENGINE_FILE='finance-engine-1.0.4.js';
 const Finance=window.FlowMapFinance;
 const FORECAST_MONTHS=6;
+let financeRuntimeStatus={ok:false,testsPassed:0,detail:'Not checked'};
 // Keep the legacy DB name so existing local data survives the FlowMap rebrand.
 const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
@@ -32,6 +35,135 @@ const minBalanceFloor=()=>{
   return Number.isFinite(n)&&n>=0?n:500;
 };
 const goals=()=>Array.isArray(state?.goals)?state.goals:[];
+
+function startupFailure(title,detail){
+  const allViews=document.querySelectorAll('#app > section');
+  allViews.forEach(x=>x.classList.add('hidden'));
+  let view=$('startupBlockView');
+  if(!view){
+    view=document.createElement('section');view.id='startupBlockView';view.className='panel';
+    view.innerHTML='<h2 id="startupBlockTitle">FlowMap stopped safely</h2><p id="startupBlockDetail" class="muted"></p><button id="startupRepairBtn" type="button">Repair App Files</button><p class="muted small">This only refreshes FlowMap app files. It does not delete or change your financial data.</p>';
+    $('app')?.prepend(view);
+    $('startupRepairBtn')?.addEventListener('click',repairAppFiles);
+  }
+  view.classList.remove('hidden');
+  const titleEl=$('startupBlockTitle'),detailEl=$('startupBlockDetail');
+  if(titleEl)titleEl.textContent=title||'FlowMap stopped safely';
+  if(detailEl)detailEl.textContent=detail||'FlowMap did not start because its finance engine could not be verified.';
+  document.querySelector('.bottomnav')?.classList.add('hidden');
+  $('backupBtn')?.classList.add('hidden');
+}
+
+async function repairAppFiles(){
+  const btn=$('startupRepairBtn');
+  if(btn){btn.disabled=true;btn.textContent='Repairing…'}
+  try{
+    if('caches' in window){for(const k of await caches.keys())await caches.delete(k)}
+    if('serviceWorker' in navigator){for(const r of await navigator.serviceWorker.getRegistrations())await r.unregister()}
+    const u=new URL(window.location.href);u.searchParams.set('flowmapRepair',Date.now().toString());
+    window.location.replace(u.toString());
+  }catch(err){
+    if(btn){btn.disabled=false;btn.textContent='Repair App Files'}
+    alert('FlowMap could not refresh its app files automatically. Your financial data was not changed.');
+  }
+}
+
+function runFinanceEngineContractTests(){
+  const failures=[];
+  try{
+    if(!Finance)throw new Error('Finance engine did not load.');
+    if(Finance.VERSION!==REQUIRED_FINANCE_ENGINE_VERSION)throw new Error(`Expected engine ${REQUIRED_FINANCE_ENGINE_VERSION}, loaded ${Finance.VERSION||'unknown'}.`);
+    const required=['projectedItems','monthBuckets','projection','pendingTotal','availableSpendingPools','protectedFingerprint','cents'];
+    for(const fn of required)if(typeof Finance[fn]!=='function')throw new Error(`Finance engine is missing ${fn}().`);
+
+    // Contract 1: a resolved skip dated before the current checkpoint must still
+    // suppress the intended later recurring occurrence in that same month.
+    const skippedState={
+      balance:{amount:1000,updatedAt:'2026-09-11T12:00:00'},
+      bills:[{id:'student-rule',name:'Student Loans',amount:460,category:'Debt',kind:'bill',schedule:'monthly_day',day:25,active:true}],
+      incomeRules:[],
+      manualItems:[{id:'sep-skip',type:'expense',kind:'bill',name:'Student Loans',amount:0,date:'2026-09-10',status:'skipped',generated:false,overrideRuleId:'student-rule',overrideRuleName:'Student Loans',overrideMonth:'2026-09',originalAmount:460}],
+      categories:[],balanceHistory:[],reconciledEventIds:[],goals:[],preferences:{}
+    };
+    const skippedItems=Finance.projectedItems(skippedState,2);
+    if(skippedItems.some(x=>x.ruleId==='student-rule'&&x.date==='2026-09-25'))failures.push('past skip did not suppress September occurrence');
+    if(!skippedItems.some(x=>x.ruleId==='student-rule'&&x.date==='2026-10-25'))failures.push('October recurring occurrence was incorrectly suppressed');
+
+    // Contract 2: unresolved prior-month outflows remain in the forecast after
+    // the checkpoint advances into a new month.
+    const carryState={
+      balance:{amount:1000,updatedAt:'2026-09-11T12:00:00'},bills:[],incomeRules:[],
+      manualItems:[{id:'old-pending',type:'expense',kind:'bill',name:'Old Pending',amount:125,date:'2026-08-31',status:'pending',generated:false}],
+      categories:[],balanceHistory:[],reconciledEventIds:[],goals:[],preferences:{}
+    };
+    const carry=Finance.projectedItems(carryState,1).filter(x=>x.id==='old-pending');
+    if(carry.length!==1||carry[0].forecastDate!=='2026-09-11'||!carry[0].carriedOverdue)failures.push('pending carry-forward contract failed');
+
+    // Contract 3: resolving one occurrence of a multi-occurrence recurring rule
+    // must not suppress its sibling occurrence later in the same month.
+    const multiState={
+      balance:{amount:0,updatedAt:'2026-09-01T12:00:00'},bills:[],
+      incomeRules:[{id:'css-rule',name:'CSS',amount:2425,schedule:'twice_monthly',active:true}],
+      manualItems:[{id:'css-10',type:'income',kind:'paycheck',name:'CSS',amount:2425,date:'2026-09-10',status:'received',generated:false,overrideRuleId:'css-rule',overrideOccurrenceDate:'2026-09-10',overrideMonth:'2026-09'}],
+      categories:[],balanceHistory:[],reconciledEventIds:[],goals:[],preferences:{}
+    };
+    const multi=Finance.projectedItems(multiState,1);
+    if(!multi.some(x=>x.ruleId==='css-rule'&&x.date==='2026-09-25'))failures.push('multi-occurrence sibling suppression contract failed');
+
+    // Contract 4: the recurring rule remains authoritative for spending-pool
+    // classification even when a current occurrence carries a legacy kind.
+    const poolState={
+      balance:{amount:500,updatedAt:'2026-09-11T12:00:00'},
+      bills:[{id:'pool-rule',name:'Apple',amount:150,category:'Subscriptions',kind:'pool',schedule:'monthly_day',day:11,active:true}],incomeRules:[],
+      manualItems:[{id:'apple-legacy',type:'expense',kind:'bill',name:'Apple actual',amount:80,date:'2026-09-11',status:'pending',generated:false,overrideRuleId:'pool-rule',overrideMonth:'2026-09'}],
+      categories:[],balanceHistory:[],reconciledEventIds:[],goals:[],preferences:{}
+    };
+    if(!Finance.availableSpendingPools(poolState).some(x=>x.id==='apple-legacy'&&x.kind==='pool'))failures.push('spending-pool classification contract failed');
+  }catch(err){failures.push(err.message||String(err))}
+  return failures.length?{ok:false,testsPassed:0,detail:failures.join('; ')}:{ok:true,testsPassed:4,detail:'Finance engine verified'};
+}
+
+function runReadOnlyStateChecks(s){
+  if(!s)return {ok:true,checks:0,detail:'No local financial state yet'};
+  const failures=[];let checks=0;
+  try{
+    const buckets=Finance.monthBuckets(s,FORECAST_MONTHS),proj=Finance.projection(s,FORECAST_MONTHS),items=Finance.projectedItems(s,FORECAST_MONTHS);
+    for(const b of buckets){
+      checks++;
+      if(Finance.cents(b.opening)+Finance.cents(b.income)-Finance.cents(b.expenses)!==Finance.cents(b.ending))failures.push(`${b.key} arithmetic does not tie`);
+    }
+    for(let i=1;i<buckets.length;i++){
+      checks++;
+      if(Finance.cents(buckets[i-1].ending)!==Finance.cents(buckets[i].opening))failures.push(`${buckets[i].key} opening does not equal prior ending`);
+    }
+    if(buckets.length){checks++;if(Finance.cents(buckets[buckets.length-1].ending)!==Finance.cents(proj.ending))failures.push('forecast ending does not match projection ending')}
+
+    const projectedIds=new Map();
+    for(const x of items)projectedIds.set(x.id,(projectedIds.get(x.id)||0)+1);
+    checks++;
+    const duplicateProjected=[...projectedIds].filter(([,n])=>n>1).map(([id])=>id);
+    if(duplicateProjected.length)failures.push(`duplicate projected ids: ${duplicateProjected.slice(0,3).join(', ')}`);
+
+    const idGroups=[['bill',s.bills||[]],['income',s.incomeRules||[]],['manual',s.manualItems||[]]];
+    for(const [label,arr] of idGroups){
+      const seen=new Set();for(const x of arr){if(!x?.id)continue;if(seen.has(x.id))failures.push(`duplicate ${label} id ${x.id}`);seen.add(x.id)}checks++;
+    }
+
+    // Every unresolved manual item that falls inside (or before) the forecast
+    // horizon must be represented exactly once by the production projection.
+    const start=Finance.localDate(s.balance?.updatedAt||new Date());start.setHours(0,0,0,0);
+    const end=new Date(start.getFullYear(),start.getMonth()+FORECAST_MONTHS,0,23,59,59,999);
+    for(const x of (s.manualItems||[])){
+      if(!x?.date)continue;
+      if(!(Finance.isUnresolvedOutflow(x)||Finance.isUnresolvedIncome(x)))continue;
+      const dt=Finance.localDate(x.date);if(dt>end)continue;
+      checks++;
+      const n=projectedIds.get(x.id)||0;
+      if(n!==1)failures.push(`${x.name||x.id} unresolved occurrence appears ${n} times`);
+    }
+  }catch(err){failures.push(err.message||String(err))}
+  return failures.length?{ok:false,checks,detail:failures.join('; ')}:{ok:true,checks,detail:'Current financial state passed read-only checks'};
+}
 
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -656,6 +788,10 @@ function renderSettings(){
  if(document.activeElement!==floorInput)floorInput.value=String(floor);
  $('minimumBalanceStatus').textContent=`Warnings trigger below ${money(floor)}. This setting does not move money or change your balance.`;
  $('appVersion').textContent=`v${APP_VERSION}`;
+ const engineEl=$('engineVersion');
+ if(engineEl)engineEl.textContent=`v${Finance?.VERSION||'—'} · ${financeRuntimeStatus.ok?'Verified':'Not verified'}`;
+ const engineDetail=$('engineDetail');
+ if(engineDetail)engineDetail.textContent=financeRuntimeStatus.ok?`${financeRuntimeStatus.testsPassed} startup engine contracts passed. Current-state checks also run read-only at startup.`:financeRuntimeStatus.detail;
  const pill=$('updateStatus'), detail=$('updateDetail'), apply=$('applyUpdateBtn');
  pill.className='update-pill';
  if(updateInfo.status==='available'){
@@ -1296,6 +1432,10 @@ async function checkForUpdate(){
  try{
    const r=await fetch(`./version.json?t=${Date.now()}`,{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);
    const j=await r.json();if(!j.version)throw new Error('Missing version');
+   if(compareVersions(j.version,APP_VERSION)===0){
+     if(j.engineVersion&&j.engineVersion!==REQUIRED_FINANCE_ENGINE_VERSION)throw new Error(`Server engine ${j.engineVersion} does not match app requirement ${REQUIRED_FINANCE_ENGINE_VERSION}`);
+     if(j.engineFile&&j.engineFile!==FINANCE_ENGINE_FILE)throw new Error('Server engine file does not match this app build');
+   }
    updateInfo={status:compareVersions(j.version,APP_VERSION)>0?'available':'ok',latest:j.version,checkedAt:nowISO(),error:null};
  }catch(err){updateInfo={status:'error',latest:null,checkedAt:nowISO(),error:err.message}}
  if(state)renderSettings();
@@ -1339,13 +1479,27 @@ function normalizeStateInMemory(s){
  return s;
 }
 
+$('startupRepairBtn')?.addEventListener('click',repairAppFiles);
+
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 (async()=>{
+ const engineCheck=runFinanceEngineContractTests();
+ financeRuntimeStatus=engineCheck;
+ if(!engineCheck.ok){
+   startupFailure('FlowMap stopped safely',`Finance engine verification failed: ${engineCheck.detail}. No financial data was changed.`);
+   return;
+ }
  await openDB();
  state=await idbGet('state')||null;
  if(state){
    state=await verifyUpdateGuard(state);
    state=normalizeStateInMemory(state);
+   const stateCheck=runReadOnlyStateChecks(state);
+   if(!stateCheck.ok){
+     startupFailure('FlowMap stopped safely',`Read-only financial consistency checks failed: ${stateCheck.detail}. FlowMap has not changed your financial records.`);
+     return;
+   }
+   financeRuntimeStatus={...engineCheck,stateChecks:stateCheck.checks,detail:`${engineCheck.testsPassed} engine contracts and ${stateCheck.checks} current-state checks passed`};
  }
  renderAll();
  checkForUpdate();

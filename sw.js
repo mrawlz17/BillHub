@@ -1,6 +1,6 @@
-const CACHE='flowmap-shell-v0.7.7';
+const CACHE='flowmap-shell-v0.7.8';
 const ASSETS=[
-  './','./index.html','./styles.css?v=0.7.7','./finance-engine.js?v=0.7.7','./app.js?v=0.7.7','./manifest.webmanifest','./version.json',
+  './','./index.html','./styles.css?v=0.7.8','./finance-engine-1.0.4.js','./app.js?v=0.7.8','./manifest.webmanifest','./version.json',
   './icons/flowmap-64.png','./icons/flowmap-192.png','./icons/flowmap-512.png','./icons/apple-touch-icon.png','./icons/flowmap-mark.png'
 ];
 
@@ -16,38 +16,30 @@ self.addEventListener('activate',event=>{
   );
 });
 
+function networkFirst(request){
+  return fetch(request,{cache:'no-store'}).then(response=>{
+    if(response&&response.ok){
+      const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy));
+    }
+    return response;
+  }).catch(()=>caches.match(request));
+}
+
 self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
   const url=new URL(event.request.url);
-
   if(url.pathname.endsWith('/version.json')||url.pathname.endsWith('version.json')){
-    event.respondWith(fetch(event.request,{cache:'no-store'}));
-    return;
+    event.respondWith(fetch(event.request,{cache:'no-store'}));return;
   }
-
   if(event.request.mode==='navigate'){
-    event.respondWith(
-      fetch(event.request,{cache:'no-store'})
-        .then(response=>{
-          const copy=response.clone();
-          caches.open(CACHE).then(cache=>cache.put('./index.html',copy));
-          return response;
-        })
-        .catch(()=>caches.match('./index.html').then(r=>r||caches.match('./')))
-    );
-    return;
+    event.respondWith(networkFirst(event.request).then(r=>r||caches.match('./index.html').then(x=>x||caches.match('./'))));return;
   }
-
-  event.respondWith(
-    caches.match(event.request).then(cached=>{
-      if(cached)return cached;
-      return fetch(event.request).then(response=>{
-        if(response&&response.ok&&url.origin===self.location.origin){
-          const copy=response.clone();
-          caches.open(CACHE).then(cache=>cache.put(event.request,copy));
-        }
-        return response;
-      });
-    })
+  const isCore=url.origin===self.location.origin&&(
+    url.pathname.endsWith('/app.js')||url.pathname.endsWith('/finance-engine-1.0.4.js')||url.pathname.endsWith('/styles.css')
   );
+  if(isCore){event.respondWith(networkFirst(event.request));return}
+  event.respondWith(caches.match(event.request).then(cached=>cached||fetch(event.request).then(response=>{
+    if(response&&response.ok&&url.origin===self.location.origin){const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(event.request,copy))}
+    return response;
+  })));
 });
