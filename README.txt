@@ -1,32 +1,37 @@
-FlowMap v0.7.8
+FlowMap v0.7.9
 
 PURPOSE
 -------
-v0.7.8 hardens FlowMap against mixed-version app installs. It does not change the v1.0.4 finance calculations introduced in v0.7.7.
+v0.7.9 is a presentation and feature-cleanup release. It does not change Finance Engine 1.0.4 or any stored financial data.
 
 WHAT CHANGED
 ------------
-- The verified finance engine now uses a versioned filename: finance-engine-1.0.4.js.
-- The engine file is byte-for-byte the same finance logic as v0.7.7 engine 1.0.4.
-- The HTML pins that exact engine file with a Subresource Integrity (SHA-256) check.
-- FlowMap verifies engine version and four finance-engine contract tests before opening local financial data.
-- FlowMap runs additional read-only checks against the current local financial state before rendering balances or forecasts.
-- If verification fails, FlowMap stops safely instead of showing possibly incorrect numbers.
-- A Repair App Files control clears only app caches/service workers and reloads fresh files. It does not touch IndexedDB financial data.
-- Settings now shows both App Version and Finance Engine Version.
-- Core app/engine/style assets use network-first service-worker loading with cache fallback to reduce stale mixed-file installs.
+- Removed the deprecated scenario-planning module from Plan, including its UI, event handlers, code, and styles.
+- Removed the deprecated category-spending report from Reports, including its UI and app-side rendering.
+- Reports now contains Recent Activity and Balance History only.
+- Renamed the Settings planning panel to Savings Safety and rewrote the copy to describe only the savings-goal minimum-balance floor.
+- Simplified cash-item markers with deterministic precedence:
+  1. Pending is shown alone once an outflow is submitted.
+  2. Unresolved spending pools show Pool alone.
+  3. Overdue replaces Upcoming.
+  4. Cleared / Received / Skipped stand alone.
+  5. Otherwise Upcoming is the state marker, with at most one contextual marker (Catch-up, Extra, Reconcile, Transfer, or Override).
+- Home layout and financial amounts are unchanged. Only marker presentation changed.
 
 FINANCIAL DATA SAFETY
 ---------------------
+- Finance Engine 1.0.4 is byte-for-byte unchanged from v0.7.8.
 - No database migration.
+- No schema change.
 - No automatic financial-record rewrite.
 - No balance-history rewrite.
-- No changes to bill amounts, income amounts, payment states, recurring schedules, spending pools, or existing month overrides.
-- Existing data remains in the same billhub-db / kv IndexedDB storage.
-- Startup verification is read-only.
+- No bill, income, recurring-schedule, status, pool, or forecast-calculation change.
+- Existing data remains in billhub-db / kv IndexedDB.
+
+NOTE ON REMOVED REPORT CODE
+---------------------------
+The removed report has no UI or app-side rendering path in v0.7.9. The locked Finance Engine 1.0.4 remains byte-for-byte unchanged; one dormant historical aggregation helper remains inside that verified engine file and is not called by the app.
 
 INSTALL
 -------
-For an existing FlowMap installation, upload all files from the v0.7.8 Update package. Then open FlowMap normally.
-
-If FlowMap detects a stale or mismatched engine, it will stop safely and offer Repair App Files. Do not reset or restore your financial data for an app-file mismatch.
+For an existing FlowMap installation, upload all files from the v0.7.9 Update package. Do not reset or restore financial data for this update.

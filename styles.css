@@ -37,8 +37,8 @@ button.danger{background:#3b1d20;color:#ffb6b6;border:1px solid #633038}
 .month-title{font-weight:800;margin-bottom:8px}
 .month-row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0}
 .month-row.end{border-top:1px solid var(--line);margin-top:5px;padding-top:8px;font-weight:800}
-.timeline-item,.list-row,.report-row,.history-row{display:grid;grid-template-columns:92px 1fr auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
-.timeline-item:last-child,.list-row:last-child,.report-row:last-child,.history-row:last-child{border-bottom:0}
+.timeline-item,.list-row,.history-row{display:grid;grid-template-columns:92px 1fr auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.timeline-item:last-child,.list-row:last-child,.history-row:last-child{border-bottom:0}
 .timeline-item .date{font-size:12px;color:var(--muted)}
 .timeline-item.income .amt{color:var(--accent)}
 .timeline-item.pending{background:rgba(245,196,81,.05)}
@@ -416,7 +416,7 @@ label{
 
 /* ---------- Plan / reports lists ---------- */
 
-.timeline-item,.list-row,.report-row,.history-row{
+.timeline-item,.list-row,.history-row{
   gap:8px;
   padding:9px 0;
 }
@@ -425,7 +425,7 @@ label{
   grid-template-columns:62px minmax(0,1fr) auto;
 }
 
-.report-row,.history-row{
+.history-row{
   grid-template-columns:72px minmax(0,1fr) auto;
 }
 
@@ -780,8 +780,6 @@ dialog form > label{
 .entry-tag.catchup{color:#ffd580;border-color:#6f5a2e;background:rgba(245,196,81,.07)}
 .entry-tag.extra{color:#c9b8ff;border-color:#53477a;background:rgba(151,126,255,.07)}
 .entry-tag.override{color:#8fcaff;border-color:#355b78;background:rgba(85,169,240,.07)}
-.entry-tag.pool{color:#7ce5b4;border-color:#356a54;background:rgba(92,225,165,.06)}
-.entry-tag.skipped{color:#ffb6b6;border-color:#633038;background:rgba(255,107,107,.05)}
 .entry-tag.reconcile{color:#c7ced6;border-color:#4a535d;background:rgba(255,255,255,.03)}
 
 .entry-context{
@@ -1012,11 +1010,13 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
 
 .badge.pending{color:var(--warn);border-color:rgba(250,204,21,.42);background:rgba(250,204,21,.06)}
 .badge.cleared{color:var(--accent);border-color:rgba(34,197,94,.4)}
+.badge.upcoming{color:var(--muted);border-color:var(--line);background:transparent}
+.badge.overdue{color:#ffd24a;border-color:rgba(250,204,21,.55);background:rgba(250,204,21,.09)}
+.badge.pool{color:#7ee79e;border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.07)}
+.badge.skipped{color:#ffaaa8;border-color:rgba(239,68,68,.46);background:rgba(239,68,68,.07)}
 .entry-tag.catchup{color:#cbb5ff;border-color:rgba(139,92,246,.5);background:rgba(139,92,246,.09)}
 .entry-tag.extra{color:#cbb5ff;border-color:rgba(139,92,246,.5);background:rgba(139,92,246,.09)}
 .entry-tag.override{color:#8db9ff;border-color:rgba(59,130,246,.52);background:rgba(59,130,246,.08)}
-.entry-tag.pool{color:#7ee79e;border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.07)}
-.entry-tag.skipped{color:#ffaaa8;border-color:rgba(239,68,68,.46);background:rgba(239,68,68,.07)}
 .entry-tag.reconcile{color:#8db9ff;border-color:rgba(59,130,246,.44);background:rgba(59,130,246,.07)}
 .payday-badge{color:#8db9ff;border-color:rgba(59,130,246,.45);background:rgba(59,130,246,.07)}
 .current-pill{display:inline-flex;align-items:center;border:1px solid rgba(34,197,94,.45);background:rgba(34,197,94,.08);color:var(--accent);border-radius:999px;padding:2px 7px;font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.04em}
@@ -1064,7 +1064,7 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
 }
 
 /* ================================================================
-   v0.6.0 — planning tools: Goals, What If, minimum balance
+   v0.6.0 — savings goals and minimum balance
    ================================================================ */
 .below-floor{color:var(--warn)!important}
 .floor-status{margin-top:4px;line-height:1.3}
@@ -1076,7 +1076,7 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
   top:63px;
   z-index:8;
   display:grid;
-  grid-template-columns:.8fr .85fr 1fr 1.35fr;
+  grid-template-columns:.9fr .9fr 1.35fr;
   gap:5px;
   margin:0 0 10px;
   padding:5px;
@@ -1176,52 +1176,17 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
 .goal-dialog-actions{flex-wrap:wrap}
 .goal-dialog-actions .danger{margin-right:auto}
 
-.whatif-form{
-  display:grid;
-  grid-template-columns:1.3fr .7fr;
-  gap:10px;
-  margin-top:12px;
-}
-.whatif-form button[type="submit"]{grid-column:1/-1}
-.whatif-result{margin-top:12px}
-.whatif-status{
-  display:flex;
-  flex-direction:column;
-  gap:3px;
-  padding:11px 12px;
-  border-radius:11px;
-  border:1px solid var(--line);
-  font-size:12px;
-}
-.whatif-status strong{font-size:14px}
-.whatif-status span{color:var(--muted)}
-.whatif-status.safe{border-color:rgba(34,197,94,.34);background:rgba(34,197,94,.055)}
-.whatif-status.safe strong{color:var(--accent)}
-.whatif-status.warn{border-color:rgba(250,204,21,.34);background:rgba(250,204,21,.055)}
-.whatif-status.warn strong{color:var(--warn)}
-.whatif-status.danger{border-color:rgba(239,68,68,.34);background:rgba(239,68,68,.055)}
-.whatif-status.danger strong{color:#ffaaa8}
-.whatif-comparison{margin-top:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.whatif-row{display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:6px;padding:8px 9px;border-bottom:1px solid var(--line);align-items:center;font-size:11px;font-variant-numeric:tabular-nums}
-.whatif-row:last-child{border-bottom:0}
-.whatif-row span{text-align:right}
-.whatif-head{background:#171b20;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.04em}
-.whatif-below{color:var(--warn);font-weight:800}
-.whatif-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 
 .minimum-balance-setting{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end;margin:10px 0 7px}
 .minimum-balance-setting button{min-height:42px}
 
 @media(max-width:430px){
-  .plan-tabs{top:59px;grid-template-columns:.8fr .85fr 1fr 1.35fr}
+  .plan-tabs{top:59px;grid-template-columns:.9fr .9fr 1.35fr}
   .plan-tab{font-size:11px;padding:7px 4px}
   .goal-metrics{grid-template-columns:repeat(3,1fr);gap:4px}
   .goal-metrics>div{padding:7px 5px;text-align:center}
   .goal-metrics strong{font-size:10px}
   .goal-insights{grid-template-columns:1fr}
-  .whatif-form{grid-template-columns:1fr}
-  .whatif-form button[type="submit"]{grid-column:auto}
-  .whatif-row{grid-template-columns:.9fr 1fr 1fr;padding:7px 6px;font-size:10px}
   .minimum-balance-setting{grid-template-columns:1fr}
 }
 .entry-tag.transfer{color:#f1d878;border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.07)}
@@ -1234,7 +1199,6 @@ button.danger{background:rgba(239,68,68,.16);color:#ffb4b4;border-color:rgba(239
 }
 
 /* v0.6.2 — unresolved past-due cash-flow state */
-.entry-tag.overdue{color:#ffd24a;border-color:rgba(250,204,21,.55);background:rgba(250,204,21,.09)}
 
 /* v0.7.1 — balance-difference pool allocation */
 .pool-allocation-box{

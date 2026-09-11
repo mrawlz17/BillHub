@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="64x64" href="icons/flowmap-64.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="styles.css?v=0.7.8" />
+  <link rel="stylesheet" href="styles.css?v=0.7.9" />
 </head>
 <body>
   <header class="topbar">
@@ -84,7 +84,6 @@
       <div class="plan-tabs" role="tablist" aria-label="Plan sections">
         <button type="button" class="plan-tab active" data-plan-pane="auditPane" role="tab" aria-selected="true">Audit</button>
         <button type="button" class="plan-tab" data-plan-pane="goalsPane" role="tab" aria-selected="false">Goals</button>
-        <button type="button" class="plan-tab" data-plan-pane="whatIfPane" role="tab" aria-selected="false">What If</button>
         <button type="button" class="plan-tab" data-plan-pane="rulesPane" role="tab" aria-selected="false">Bills & Income</button>
       </div>
 
@@ -131,33 +130,6 @@
         </article>
       </div>
 
-      <div id="whatIfPane" class="plan-pane hidden">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>What If</h2>
-              <p class="muted small">Test a purchase against the live six-month forecast. Nothing is saved unless you add it to the plan.</p>
-            </div>
-          </div>
-          <form id="whatIfForm" class="whatif-form">
-            <label>Purchase
-              <input id="whatIfName" value="Purchase" maxlength="60" required />
-            </label>
-            <label>Amount
-              <input id="whatIfAmount" type="number" min="0.01" step="0.01" inputmode="decimal" required />
-            </label>
-            <label>Date
-              <input id="whatIfDate" type="date" required />
-            </label>
-            <label>Category
-              <select id="whatIfCategory"></select>
-            </label>
-            <button type="submit">Run Scenario</button>
-          </form>
-          <div id="whatIfResult" class="whatif-result hidden"></div>
-        </article>
-      </div>
-
       <div id="rulesPane" class="plan-pane hidden">
         <article class="panel">
           <div class="panel-head">
@@ -192,11 +164,6 @@
         <div id="recentActivity"></div>
       </article>
       <article class="panel">
-        <h2>Spending by Category</h2>
-        <p class="muted">Cleared spending only.</p>
-        <div id="categoryReport"></div>
-      </article>
-      <article class="panel">
         <h2>Balance History</h2>
         <div id="balanceHistory"></div>
       </article>
@@ -215,8 +182,8 @@
       </article>
 
       <article class="panel">
-        <h2>Planning</h2>
-        <p class="muted small">FlowMap uses this as a warning floor for savings goals and What If scenarios. It never blocks an intentional plan.</p>
+        <h2>Savings Safety</h2>
+        <p class="muted small">Sets the minimum checking balance FlowMap uses when evaluating safe savings-goal transfers. It never moves money or changes your forecast on its own.</p>
         <div class="minimum-balance-setting">
           <label>Minimum Balance
             <input id="minimumBalanceInput" type="number" min="0" step="50" inputmode="decimal" />
@@ -232,7 +199,7 @@
         <div class="update-summary">
           <div>
             <div class="muted small">Installed version</div>
-            <strong id="appVersion">v0.7.8</strong>
+            <strong id="appVersion">v0.7.9</strong>
             <div class="muted small" style="margin-top:6px">Finance engine</div>
             <strong id="engineVersion">v1.0.4 · Verifying…</strong>
           </div>
@@ -461,7 +428,7 @@
     <div class="dialog-shell">
       <h3 id="resetDialogTitle" tabindex="-1">Delete all local FlowMap data?</h3>
       <div class="danger-notice">
-        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, savings goals, planning settings, and local activity stored in this browser. Your backup files are not affected.
+        This permanently removes the balance history, recurring bills, income rules, month overrides, extras, savings goals, savings-safety setting, and local activity stored in this browser. Your backup files are not affected.
       </div>
       <button id="backupBeforeResetBtn" type="button" class="secondary full-btn">Back up first</button>
       <label class="confirm-label">Type <strong>DELETE</strong> to enable the final reset
@@ -475,6 +442,6 @@
   </dialog>
 
   <script id="financeEngineScript" src="finance-engine-1.0.4.js" integrity="sha256-dcCgiea0oWSZJ/JiT9rk5TrBigbvIlWNGK6csbFdZFY="></script>
-  <script src="app.js?v=0.7.8"></script>
+  <script src="app.js?v=0.7.9"></script>
 </body>
 </html>

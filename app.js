@@ -1,4 +1,4 @@
-const APP_VERSION='0.7.8';
+const APP_VERSION='0.7.9';
 const DATA_SCHEMA_VERSION=1;
 const REQUIRED_FINANCE_ENGINE_VERSION='1.0.4';
 const FINANCE_ENGINE_FILE='finance-engine-1.0.4.js';
@@ -10,7 +10,7 @@ const DB_NAME='billhub-db', DB_VERSION=1;
 let db, state=null, lastProjection=[];
 let activeItem=null, editingRuleId=null, editingIncomeId=null, extraRelatedRuleId=null;
 let activeMonthKey=null, pendingRestore=null, undoState=null, toastTimer=null, openFutureMonthKey=null;
-let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='auditPane', auditMonthKey=null, whatIfScenario=null;
+let activeGoalId=null, activeGoalTransferId=null, currentPlanPane='auditPane', auditMonthKey=null;
 let updateGuardNotice=null;
 let updateInfo={status:'checking',latest:null,checkedAt:null,error:null};
 let balanceAllocationDraft={};
@@ -233,7 +233,7 @@ async function verifyUpdateGuard(current){
     return structuredClone(guard.state);
   }
   await idbDel('updateGuard');
-  updateGuardNotice='Update verified — financial and planning data unchanged.';
+  updateGuardNotice='Update verified — financial data and savings settings unchanged.';
   return current;
 }
 
@@ -349,23 +349,35 @@ function projectedItems(months=FORECAST_MONTHS,additionalItems=[]){return Financ
 function projection(months=FORECAST_MONTHS,additionalItems=[]){return Finance.projection(state,months,additionalItems)}
 function monthBuckets(months=FORECAST_MONTHS,additionalItems=[]){return Finance.monthBuckets(state,months,additionalItems)}
 
+function displayStateBadge(x){
+ const status=x.status||'upcoming';
+ // Marker precedence is intentionally deterministic:
+ // Pending is the only marker once submitted; unresolved pools show only Pool;
+ // Overdue replaces Upcoming. Resolved states stand alone.
+ if(status==='pending')return ['PENDING','pending'];
+ if(status==='cleared')return ['CLEARED','cleared'];
+ if(status==='received')return ['RECEIVED','cleared'];
+ if(status==='skipped')return ['SKIPPED','skipped'];
+ if(x.kind==='pool')return ['POOL','pool'];
+ if(isOverdueItem(x))return ['OVERDUE','overdue'];
+ return ['UPCOMING','upcoming'];
+}
 function statusBadge(x){
- let s=x.status||'upcoming';
- if(s==='received')s='cleared';
- return `<span class="badge ${s}">${s}</span>`;
+ const [label,cls]=displayStateBadge(x);
+ return `<span class="badge ${cls}">${label}</span>`;
 }
 function entryTags(x){
- const tags=[];
- if(isOverdueItem(x))tags.push(['OVERDUE','overdue']);
- if(x.kind==='catchup')tags.push(['CATCH-UP','catchup']);
- else if(x.kind==='extra')tags.push(['EXTRA','extra']);
- else if(x.kind==='reconciliation')tags.push(['RECONCILE','reconcile']);
- else if(x.kind==='savings_transfer')tags.push(['TRANSFER','transfer']);
- if(x.overrideRuleId && x.kind!=='catchup')tags.push(['OVERRIDE','override']);
- if(x.kind==='pool')tags.push(['POOL','pool']);
- if(x.status==='skipped')tags.push(['SKIPPED','skipped']);
- if(!tags.length)return '';
- return `<span class="entry-badges">${tags.map(([t,c])=>`<span class="entry-tag ${c}">${t}</span>`).join('')}</span>`;
+ const status=x.status||'upcoming';
+ // Pending, resolved items, and pools never carry secondary markers.
+ if(status==='pending'||status==='cleared'||status==='received'||status==='skipped'||x.kind==='pool')return '';
+ let tag=null;
+ if(x.kind==='catchup')tag=['CATCH-UP','catchup'];
+ else if(x.kind==='extra')tag=['EXTRA','extra'];
+ else if(x.kind==='reconciliation')tag=['RECONCILE','reconcile'];
+ else if(x.kind==='savings_transfer')tag=['TRANSFER','transfer'];
+ else if(x.overrideRuleId)tag=['OVERRIDE','override'];
+ if(!tag)return '';
+ return `<span class="entry-badges"><span class="entry-tag ${tag[1]}">${tag[0]}</span></span>`;
 }
 function cashItemHTML(x,{showAfter=true}={}){
  return `<div class="month-cash-item ${x.type==='income'?'income':''} ${x.status==='pending'?'pending':''}" data-id="${x.id}">
@@ -479,7 +491,7 @@ function goalStatusLabel(plan){
 }
 function renderGoals(){
  const floor=minBalanceFloor();
- $('goalFloorNote').innerHTML=`<span class="floor-dot"></span>Planning floor <strong>${money(floor)}</strong> <span class="muted">· adjustable in Settings</span>`;
+ $('goalFloorNote').innerHTML=`<span class="floor-dot"></span>Savings floor <strong>${money(floor)}</strong> <span class="muted">· adjustable in Settings</span>`;
  const list=goals();
  if(!list.length){
    $('goalsList').innerHTML=`<div class="empty-planning"><strong>No savings goals yet.</strong><span>Create a goal and FlowMap will test it against your cash flow without changing your balance.</span></div>`;
@@ -515,42 +527,6 @@ function renderGoals(){
  document.querySelectorAll('.goal-transfer-btn').forEach(b=>b.addEventListener('click',()=>openGoalTransferDialog(b.dataset.goalId)));
 }
 function escapeHTML(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-function scenarioItemFromForm(){
- return {id:'scenario:whatif',type:'expense',kind:'extra',name:$('whatIfName').value.trim()||'Purchase',category:$('whatIfCategory').value||'Miscellaneous',amount:+$('whatIfAmount').value,date:$('whatIfDate').value,status:'upcoming',scenario:true};
-}
-function renderWhatIfResult(){
- const box=$('whatIfResult');
- if(!whatIfScenario){box.classList.add('hidden');box.innerHTML='';return}
- const base=monthBuckets(FORECAST_MONTHS),test=monthBuckets(FORECAST_MONTHS,[whatIfScenario]);
- const tested=projection(FORECAST_MONTHS,[whatIfScenario]),floor=minBalanceFloor();
- let cls='safe',headline=`Stays above ${money(floor)} minimum`;
- if(tested.low<0){cls='danger';headline=`Goes negative by ${money(Math.abs(tested.low))}`}
- else if(tested.low<floor){cls='warn';headline=`Falls ${money(floor-tested.low)} below your minimum`}
- const rows=test.map((m,i)=>`<div class="whatif-row"><strong>${m.label}</strong><span>${money(base[i].ending)}</span><span class="${m.ending<floor?'whatif-below':''}">${money(m.ending)}</span></div>`).join('');
- box.innerHTML=`<div class="whatif-status ${cls}"><strong>${headline}</strong><span>Lowest balance ${money(tested.low)} · ${dstr(tested.lowDate)}</span></div>
-   <div class="whatif-comparison"><div class="whatif-row whatif-head"><strong>Month</strong><span>Current</span><span>With purchase</span></div>${rows}</div>
-   <div class="whatif-actions"><button type="button" id="clearWhatIfBtn" class="secondary">Clear Scenario</button><button type="button" id="addWhatIfBtn">Add to Plan</button></div>`;
- box.classList.remove('hidden');
- $('clearWhatIfBtn').addEventListener('click',()=>{whatIfScenario=null;renderWhatIfResult()});
- $('addWhatIfBtn').addEventListener('click',addWhatIfToPlan);
-}
-function renderWhatIf(){
- const bounds=forecastBounds();
- $('whatIfDate').min=bounds.minISO;$('whatIfDate').max=bounds.maxISO;
- if(!$('whatIfDate').value)$('whatIfDate').value=bounds.minISO;
- if(!$('whatIfCategory').dataset.initialized){
-   if(state.categories.includes('Miscellaneous'))$('whatIfCategory').value='Miscellaneous';
-   $('whatIfCategory').dataset.initialized='1';
- }
- renderWhatIfResult();
-}
-async function addWhatIfToPlan(){
- if(!whatIfScenario)return;
- const item={...whatIfScenario,id:uid(),scenario:undefined};delete item.scenario;
- await commitAction('Scenario added to plan',`${item.name} · ${money(item.amount)}`,async()=>{state.manualItems=state.manualItems||[];state.manualItems.push(item)});
- whatIfScenario=null;$('whatIfAmount').value='';renderWhatIfResult();
-}
-
 function renderDashboard(){
  $('currentBalance').textContent=money(state.balance.amount);
  $('balanceUpdated').textContent=state.balance.updatedAt?`Updated ${new Date(state.balance.updatedAt).toLocaleString()}`:'Not updated';
@@ -738,7 +714,7 @@ function renderPlan(){
  });
  document.querySelectorAll('.plan-pane').forEach(p=>p.classList.toggle('hidden',p.id!==currentPlanPane));
  if(currentPlanPane==='auditPane')renderAudit();
- renderGoals();renderWhatIf();
+ renderGoals();
  const sortedBills=[...state.bills].sort((a,b)=>{
    const rank=x=>x.schedule==='monthly_day'?(x.day||99):x.schedule==='second_monday'?8:50;
    return rank(a)-rank(b)||a.name.localeCompare(b.name);
@@ -770,9 +746,6 @@ function renderReports(){
  $('undoLastActionBtn').disabled=!undoState;
  $('undoLastActionBtn').title=undoState?`Undo: ${undoState.label}`:'Nothing to undo in this session';
 
- const sums=Finance.clearedSpendingByCategory(state);
- const entries=Object.entries(sums).sort((a,b)=>b[1]-a[1]);
- $('categoryReport').innerHTML=entries.length?entries.map(([k,v])=>`<div class="report-row"><div></div><div>${k}</div><div class="amt">${money(v)}</div></div>`).join(''):'<p class="muted">No cleared spending yet.</p>';
  $('balanceHistory').innerHTML=(state.balanceHistory||[]).slice().reverse().map(h=>`<div class="history-row"><div>${dstr(h.at)}</div><div class="muted small">${h.note||'Balance checkpoint'}</div><div class="amt">${money(h.amount)}</div></div>`).join('')||'<p class="muted">No balance history yet.</p>';
 }
 function daysSince(iso){return iso?Math.floor((Date.now()-new Date(iso).getTime())/86400000):null}
@@ -827,7 +800,7 @@ function renderAll(){
 }
 function fillCategorySelects(){
  const opts=state.categories.map(c=>`<option>${c}</option>`).join('');
- ['extraCategory','ruleCategory','itemCategory','whatIfCategory'].forEach(id=>$(id).innerHTML=opts);
+ ['extraCategory','ruleCategory','itemCategory'].forEach(id=>$(id).innerHTML=opts);
 }
 let currentView='dashboardView';
 document.querySelectorAll('.bottomnav button').forEach(b=>b.addEventListener('click',()=>{
@@ -843,21 +816,11 @@ $('auditMonthSelect').addEventListener('change',()=>{
  auditMonthKey=$('auditMonthSelect').value;renderAudit();
 });
 
-$('whatIfForm').addEventListener('submit',e=>{
- e.preventDefault();
- const item=scenarioItemFromForm();
- if(!Number.isFinite(item.amount)||item.amount<=0)return;
- const bounds=forecastBounds();
- if(!item.date||item.date<bounds.minISO||item.date>bounds.maxISO){
-   alert(`Choose a date between ${dstr(bounds.minISO)} and ${dstr(bounds.maxISO)} for the six-month scenario.`);return;
- }
- whatIfScenario=item;renderWhatIfResult();
-});
 
 $('saveMinimumBalanceBtn').addEventListener('click',async()=>{
  const value=+$('minimumBalanceInput').value;
  if(!Number.isFinite(value)||value<0){alert('Enter a minimum balance of $0 or more.');return}
- await commitAction('Minimum balance updated',money(value),async()=>{
+ await commitAction('Savings floor updated',money(value),async()=>{
    state.preferences=state.preferences||{};state.preferences.minimumBalance=Math.round(value*100)/100;
  });
 });
@@ -1381,7 +1344,7 @@ function showRestorePreview(restored,fileName,fileModifiedAt=null){
    <div class="restore-label">Recurring bills</div><div class="restore-value">${(restored.bills||[]).length}</div>
    <div class="restore-label">Income sources</div><div class="restore-value">${(restored.incomeRules||[]).length}</div>
    <div class="restore-label">Savings goals</div><div class="restore-value">${(restored.goals||[]).length}</div>
-   <div class="restore-label">Minimum balance</div><div class="restore-value">${money(restored.preferences?.minimumBalance??500)}</div>`;
+   <div class="restore-label">Savings floor</div><div class="restore-value">${money(restored.preferences?.minimumBalance??500)}</div>`;
  $('restorePreviewDialog').showModal();focusDialogTitle('restorePreviewTitle');
 }
 async function handleRestoreFile(f,input){
